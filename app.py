@@ -10,7 +10,12 @@ from datetime import datetime, timezone
 app = FastAPI()
 
 USAGE_FILE = "usage_log.json"
-FREE_MONTHLY_LIMIT = 3
+
+FREE_TOTAL_LIMIT = 3
+FREE_MAX_DAYS = 7
+PRO_MAX_DAYS = 365
+
+ALLOWED_DATA = {"daily_summary", "sleep", "workouts"}
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -170,6 +175,44 @@ def home():
         cursor: pointer;
     }
 
+    .plan-grid {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 12px;
+        margin-top: 8px;
+    }
+
+    .plan-card {
+        border: 1px solid #dbe1ea;
+        border-radius: 16px;
+        padding: 14px;
+        background: #fafbfc;
+    }
+
+    .plan-card.active {
+        border: 2px solid #111827;
+        background: #ffffff;
+    }
+
+    .plan-title {
+        font-weight: 700;
+        margin-bottom: 6px;
+    }
+
+    .plan-meta {
+        font-size: 13px;
+        color: #6b7280;
+        line-height: 1.6;
+    }
+
+    .coming-soon {
+        display: inline-block;
+        margin-left: 8px;
+        font-size: 12px;
+        color: #2563eb;
+        font-weight: 700;
+    }
+
     button {
         margin-top: 18px;
         background: #111827;
@@ -198,6 +241,13 @@ def home():
         font-size: 14px;
         color: #6b7280;
         line-height: 1.7;
+    }
+
+    .small-note {
+        margin-top: 10px;
+        font-size: 12px;
+        color: #6b7280;
+        line-height: 1.6;
     }
 
     .section {
@@ -297,7 +347,7 @@ def home():
     }
 
     @media (max-width: 960px) {
-        .hero, .steps, .grid-2, .grid-3 {
+        .hero, .steps, .grid-2, .grid-3, .plan-grid {
             grid-template-columns: 1fr;
         }
 
@@ -335,7 +385,7 @@ def home():
                 <div class="chip">Sleep</div>
                 <div class="chip">Workouts</div>
                 <div class="chip">Free: 7 days</div>
-                <div class="chip">3 exports / month</div>
+                <div class="chip">3 exports total</div>
                 <div class="chip">Garmin supported</div>
                 <div class="chip">Strava coming soon</div>
             </div>
@@ -396,9 +446,25 @@ def home():
         <div class="form-card">
             <h2>Generate dataset</h2>
             <p>
-                Garmin export ZIP files can be large. Processing may take up to about 1 minute,
-                depending on file size and server startup time.
+                Upload your Garmin export ZIP, choose a date range, and download AI-ready JSON.
             </p>
+
+            <div class="plan-grid">
+                <div class="plan-card active">
+                    <div class="plan-title">Free</div>
+                    <div class="plan-meta">
+                        Up to 7 days per export<br>
+                        3 exports total
+                    </div>
+                </div>
+                <div class="plan-card">
+                    <div class="plan-title">Pro <span class="coming-soon">Coming soon</span></div>
+                    <div class="plan-meta">
+                        Up to 365 days per export<br>
+                        More sources and more data
+                    </div>
+                </div>
+            </div>
 
             <form id="uploadForm">
                 <label for="file">Garmin export ZIP</label>
@@ -417,8 +483,8 @@ def home():
 
                 <label for="plan">Plan</label>
                 <select id="plan" name="plan">
-                    <option value="free">Free</option>
-                    <option value="pro">Pro</option>
+                    <option value="free" selected>Free</option>
+                    <option value="pro" disabled>Pro (coming soon)</option>
                 </select>
 
                 <label>Choose data to include</label>
@@ -447,9 +513,13 @@ def home():
             <div class="plan-note">
                 <strong>Free plan</strong><br>
                 • Up to 7 days per export<br>
-                • 3 exports per month<br><br>
+                • 3 exports total<br><br>
                 <strong>Pro plan</strong><br>
-                • Up to 365 days per export
+                • Coming soon
+            </div>
+
+            <div class="small-note">
+                This tool prepares structured JSON only. It does not provide in-app coaching or AI analysis.
             </div>
         </div>
     </div>
@@ -651,6 +721,27 @@ def home():
 </div>
 
 <script>
+function parseDateOnly(value) {
+    const parts = value.split("-");
+    if (parts.length !== 3) return null;
+    const y = Number(parts[0]);
+    const m = Number(parts[1]);
+    const d = Number(parts[2]);
+    if (!y || !m || !d) return null;
+    return { y, m, d };
+}
+
+function diffDaysInclusive(startStr, endStr) {
+    const s = parseDateOnly(startStr);
+    const e = parseDateOnly(endStr);
+    if (!s || !e) return null;
+
+    const startUTC = Date.UTC(s.y, s.m - 1, s.d);
+    const endUTC = Date.UTC(e.y, e.m - 1, e.d);
+
+    return Math.floor((endUTC - startUTC) / (1000 * 60 * 60 * 24)) + 1;
+}
+
 const form = document.getElementById("uploadForm");
 const message = document.getElementById("message");
 const submitButton = form.querySelector("button[type='submit']");
@@ -675,11 +766,14 @@ form.addEventListener("submit", async (e) => {
         return;
     }
 
-    const start = new Date(startDate);
-    const end = new Date(endDate);
-    const days = Math.floor((end - start) / (1000 * 60 * 60 * 24)) + 1;
+    const days = diffDaysInclusive(startDate, endDate);
+    if (days === null) {
+        message.textContent = "Invalid date format.";
+        message.style.color = "#dc2626";
+        return;
+    }
 
-    if (end < start) {
+    if (days < 1) {
         message.textContent = "End date must be on or after start date.";
         message.style.color = "#dc2626";
         return;
@@ -691,8 +785,8 @@ form.addEventListener("submit", async (e) => {
         return;
     }
 
-    if (plan === "pro" && days > 365) {
-        message.textContent = "Pro plan supports up to 365 days per export.";
+    if (plan === "pro") {
+        message.textContent = "Pro is coming soon. Please use Free for now.";
         message.style.color = "#dc2626";
         return;
     }
@@ -767,11 +861,11 @@ def health():
     return {"status": "ok"}
 
 
-def parse_input_date(date_str, field):
+def parse_input_date(date_str: str, field: str):
     try:
         return datetime.strptime(date_str, "%Y-%m-%d").date()
     except Exception:
-        raise HTTPException(status_code=400, detail=f"Invalid {field}")
+        raise HTTPException(status_code=400, detail=f"Invalid {field}.")
 
 
 def parse_garmin_datetime(dt):
@@ -784,62 +878,197 @@ def parse_garmin_datetime(dt):
 
 
 def normalize_included_data(values):
-    allowed = {"daily_summary", "sleep", "workouts"}
     cleaned = []
-
     for v in values:
-        if v in allowed and v not in cleaned:
+        if v in ALLOWED_DATA and v not in cleaned:
             cleaned.append(v)
-
     return cleaned
+
+
+def validate_plan(plan: str):
+    if plan not in {"free", "pro"}:
+        raise HTTPException(status_code=400, detail="Invalid plan.")
+
+    if plan == "pro":
+        raise HTTPException(status_code=403, detail="Pro is coming soon. Please use Free for now.")
 
 
 def enforce_plan_limit(plan, start, end):
     days = (end - start).days + 1
 
-    if plan == "free" and days > 7:
+    if plan == "free" and days > FREE_MAX_DAYS:
         raise HTTPException(
             status_code=400,
-            detail="Free plan supports up to 7 days per export."
+            detail=f"Free plan supports up to {FREE_MAX_DAYS} days per export."
         )
 
-    if plan == "pro" and days > 365:
+    if plan == "pro" and days > PRO_MAX_DAYS:
         raise HTTPException(
             status_code=400,
-            detail="Pro plan supports up to 365 days."
+            detail=f"Pro plan supports up to {PRO_MAX_DAYS} days per export."
         )
+
+
+def get_client_ip(request: Request) -> str:
+    forwarded = request.headers.get("x-forwarded-for")
+    if forwarded:
+        return forwarded.split(",")[0].strip()
+
+    if request.client and request.client.host:
+        return request.client.host
+
+    return "unknown"
+
+
+def load_usage():
+    if Path(USAGE_FILE).exists():
+        try:
+            with open(USAGE_FILE, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            if isinstance(data, dict):
+                return data
+        except Exception:
+            pass
+    return {"free_total_by_ip": {}}
+
+
+def save_usage(data):
+    with open(USAGE_FILE, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False, indent=2)
 
 
 def check_usage_limit(ip, plan):
     if plan != "free":
         return
 
-    month = datetime.utcnow().strftime("%Y-%m")
+    data = load_usage()
+    totals = data.get("free_total_by_ip", {})
+    count = totals.get(ip, 0)
 
-    if Path(USAGE_FILE).exists():
-        try:
-            with open(USAGE_FILE, "r", encoding="utf-8") as f:
-                data = json.load(f)
-        except Exception:
-            data = {}
-    else:
-        data = {}
-
-    if month not in data:
-        data[month] = {}
-
-    count = data[month].get(ip, 0)
-
-    if count >= FREE_MONTHLY_LIMIT:
+    if count >= FREE_TOTAL_LIMIT:
         raise HTTPException(
             status_code=429,
-            detail="Free plan monthly limit reached (3 exports)."
+            detail=f"Free plan total limit reached ({FREE_TOTAL_LIMIT} exports)."
         )
 
-    data[month][ip] = count + 1
+    totals[ip] = count + 1
+    data["free_total_by_ip"] = totals
+    save_usage(data)
 
-    with open(USAGE_FILE, "w", encoding="utf-8") as f:
-        json.dump(data, f)
+
+def collect_daily_summary(uds_files, start, end):
+    daily_summary = []
+
+    for file_path in uds_files:
+        try:
+            with open(file_path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+        except Exception:
+            continue
+
+        if not isinstance(data, list):
+            continue
+
+        for item in data:
+            date = item.get("calendarDate")
+            if not date:
+                continue
+
+            try:
+                d = datetime.strptime(date, "%Y-%m-%d").date()
+            except ValueError:
+                continue
+
+            if start <= d <= end:
+                dist = item.get("totalDistanceMeters")
+                daily_summary.append({
+                    "date": date,
+                    "steps": item.get("totalSteps"),
+                    "total_calories": item.get("totalKilocalories"),
+                    "active_calories": item.get("activeKilocalories"),
+                    "distance_km": round(dist / 1000, 2) if dist is not None else None,
+                    "resting_hr": item.get("restingHeartRate")
+                })
+
+    return sorted(daily_summary, key=lambda x: x["date"])
+
+
+def collect_sleep(sleep_files, start, end):
+    sleep = []
+
+    for file_path in sleep_files:
+        try:
+            with open(file_path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+        except Exception:
+            continue
+
+        if not isinstance(data, list):
+            continue
+
+        for item in data:
+            date = item.get("calendarDate")
+            if not date:
+                continue
+
+            try:
+                d = datetime.strptime(date, "%Y-%m-%d").date()
+            except ValueError:
+                continue
+
+            if start <= d <= end:
+                sleep.append({
+                    "date": date,
+                    "sleep_start": parse_garmin_datetime(item.get("sleepStartTimestampGMT")),
+                    "sleep_end": parse_garmin_datetime(item.get("sleepEndTimestampGMT")),
+                    "deep_sleep_min": round((item.get("deepSleepSeconds") or 0) / 60),
+                    "light_sleep_min": round((item.get("lightSleepSeconds") or 0) / 60),
+                    "rem_sleep_min": round((item.get("remSleepSeconds") or 0) / 60)
+                })
+
+    return sorted(sleep, key=lambda x: x["date"])
+
+
+def collect_workouts(workout_files, start, end):
+    workouts = []
+
+    for file_path in workout_files:
+        try:
+            with open(file_path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+        except Exception:
+            continue
+
+        if isinstance(data, list):
+            if len(data) > 0 and isinstance(data[0], dict) and "summarizedActivitiesExport" in data[0]:
+                activities = data[0]["summarizedActivitiesExport"]
+            else:
+                activities = data
+        else:
+            activities = []
+
+        for act in activities:
+            start_time = act.get("startTimeLocal")
+
+            if not isinstance(start_time, (int, float)):
+                continue
+
+            date = datetime.fromtimestamp(start_time / 1000, tz=timezone.utc).date()
+
+            if start <= date <= end:
+                dist = act.get("distance")
+                dur = act.get("duration")
+
+                workouts.append({
+                    "date": date.isoformat(),
+                    "sport": act.get("sportType"),
+                    "distance_km": round(dist / 100000, 2) if dist is not None else None,
+                    "duration_min": round(dur / 60000, 1) if dur is not None else None,
+                    "avg_hr": act.get("avgHr"),
+                    "max_hr": act.get("maxHr")
+                })
+
+    return sorted(workouts, key=lambda x: x["date"])
 
 
 @app.post("/upload")
@@ -851,13 +1080,14 @@ async def upload(
     plan: str = Form("free"),
     included_data: list[str] = Form(...)
 ):
-    ip = request.client.host if request.client else "unknown"
+    ip = get_client_ip(request)
 
     if not file.filename or not file.filename.lower().endswith(".zip"):
-        raise HTTPException(status_code=400, detail="Upload a Garmin export zip.")
+        raise HTTPException(status_code=400, detail="Upload a Garmin export ZIP.")
+
+    validate_plan(plan)
 
     selected = normalize_included_data(included_data)
-
     if len(selected) == 0:
         raise HTTPException(status_code=400, detail="Please select at least one data type.")
 
@@ -865,7 +1095,7 @@ async def upload(
     end = parse_input_date(end_date, "end_date")
 
     if start > end:
-        raise HTTPException(status_code=400, detail="Invalid date range.")
+        raise HTTPException(status_code=400, detail="End date must be on or after start date.")
 
     enforce_plan_limit(plan, start, end)
     check_usage_limit(ip, plan)
@@ -891,117 +1121,14 @@ async def upload(
 
                     if lower.startswith("udsfile_") and lower.endswith(".json"):
                         uds_files.append(path)
-
-                    if lower.endswith("_sleepdata.json"):
+                    elif lower.endswith("_sleepdata.json"):
                         sleep_files.append(path)
-
-                    if "summarizedactivities" in lower and lower.endswith(".json"):
+                    elif "summarizedactivities" in lower and lower.endswith(".json"):
                         workout_files.append(path)
 
-            daily_summary = []
-            sleep = []
-            workouts = []
-
-            if "daily_summary" in selected:
-                for file_path in uds_files:
-                    try:
-                        with open(file_path, "r", encoding="utf-8") as f:
-                            data = json.load(f)
-                    except Exception:
-                        continue
-
-                    if not isinstance(data, list):
-                        continue
-
-                    for item in data:
-                        date = item.get("calendarDate")
-                        if not date:
-                            continue
-
-                        try:
-                            d = datetime.strptime(date, "%Y-%m-%d").date()
-                        except ValueError:
-                            continue
-
-                        if start <= d <= end:
-                            dist = item.get("totalDistanceMeters")
-
-                            daily_summary.append({
-                                "date": date,
-                                "steps": item.get("totalSteps"),
-                                "total_calories": item.get("totalKilocalories"),
-                                "active_calories": item.get("activeKilocalories"),
-                                "distance_km": round(dist / 1000, 2) if dist is not None else None,
-                                "resting_hr": item.get("restingHeartRate")
-                            })
-
-            if "sleep" in selected:
-                for file_path in sleep_files:
-                    try:
-                        with open(file_path, "r", encoding="utf-8") as f:
-                            data = json.load(f)
-                    except Exception:
-                        continue
-
-                    if not isinstance(data, list):
-                        continue
-
-                    for item in data:
-                        date = item.get("calendarDate")
-                        if not date:
-                            continue
-
-                        try:
-                            d = datetime.strptime(date, "%Y-%m-%d").date()
-                        except ValueError:
-                            continue
-
-                        if start <= d <= end:
-                            sleep.append({
-                                "date": date,
-                                "sleep_start": parse_garmin_datetime(item.get("sleepStartTimestampGMT")),
-                                "sleep_end": parse_garmin_datetime(item.get("sleepEndTimestampGMT")),
-                                "deep_sleep_min": round((item.get("deepSleepSeconds") or 0) / 60),
-                                "light_sleep_min": round((item.get("lightSleepSeconds") or 0) / 60),
-                                "rem_sleep_min": round((item.get("remSleepSeconds") or 0) / 60)
-                            })
-
-            if "workouts" in selected:
-                for file_path in workout_files:
-                    try:
-                        with open(file_path, "r", encoding="utf-8") as f:
-                            data = json.load(f)
-                    except Exception:
-                        continue
-
-                    if isinstance(data, list):
-                        if len(data) > 0 and isinstance(data[0], dict) and "summarizedActivitiesExport" in data[0]:
-                            activities = data[0]["summarizedActivitiesExport"]
-                        else:
-                            activities = data
-                    else:
-                        activities = []
-
-                    for act in activities:
-                        start_time = act.get("startTimeLocal")
-
-                        if not isinstance(start_time, (int, float)):
-                            continue
-
-                        date = datetime.fromtimestamp(start_time / 1000, tz=timezone.utc).date()
-
-                        if start <= date <= end:
-                            dist = act.get("distance")
-                            dur = act.get("duration")
-
-                            workouts.append({
-                                "date": date.isoformat(),
-                                "sport": act.get("sportType"),
-                                "distance_km": round(dist / 100000, 2) if dist is not None else None,
-                                "duration_min": round(dur / 60000, 1) if dur is not None else None,
-                                "avg_hr": act.get("avgHr"),
-                                "max_hr": act.get("maxHr")
-                            })
+            daily_summary = collect_daily_summary(uds_files, start, end) if "daily_summary" in selected else []
+            sleep = collect_sleep(sleep_files, start, end) if "sleep" in selected else []
+            workouts = collect_workouts(workout_files, start, end) if "workouts" in selected else []
 
             result = {
                 "source": "garmin",
@@ -1012,9 +1139,9 @@ async def upload(
                     "end": end_date
                 },
                 "included_data": selected,
-                "daily_summary": sorted(daily_summary, key=lambda x: x["date"]) if "daily_summary" in selected else [],
-                "sleep": sorted(sleep, key=lambda x: x["date"]) if "sleep" in selected else [],
-                "workouts": sorted(workouts, key=lambda x: x["date"]) if "workouts" in selected else [],
+                "daily_summary": daily_summary if "daily_summary" in selected else [],
+                "sleep": sleep if "sleep" in selected else [],
+                "workouts": workouts if "workouts" in selected else [],
                 "record_counts": {
                     "daily_summary": len(daily_summary) if "daily_summary" in selected else 0,
                     "sleep": len(sleep) if "sleep" in selected else 0,
@@ -1033,6 +1160,6 @@ async def upload(
     except HTTPException:
         raise
     except zipfile.BadZipFile:
-        raise HTTPException(status_code=400, detail="Invalid zip file.")
+        raise HTTPException(status_code=400, detail="Invalid ZIP file.")
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
