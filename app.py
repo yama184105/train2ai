@@ -28,6 +28,7 @@ def home():
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>train2ai</title>
 <meta name="description" content="Turn Garmin exports into AI-ready datasets for ChatGPT, Claude, and Gemini.">
+<script defer data-domain="train2ai.onrender.com" src="https://plausible.io/js/script.js"></script>
 <style>
     * { box-sizing: border-box; }
 
@@ -259,13 +260,6 @@ def home():
         min-height: 22px;
         font-size: 14px;
         font-weight: 700;
-    }
-
-    .plan-note {
-        margin-top: 14px;
-        font-size: 14px;
-        color: #6b7280;
-        line-height: 1.7;
     }
 
     .small-note {
@@ -779,9 +773,17 @@ function diffDaysInclusive(startStr, endStr) {
     return Math.floor((endUTC - startUTC) / (1000 * 60 * 60 * 24)) + 1;
 }
 
+function trackEvent(name, props = {}) {
+    if (typeof window.plausible === "function") {
+        window.plausible(name, { props: props });
+    }
+}
+
 const form = document.getElementById("uploadForm");
 const message = document.getElementById("message");
 const submitButton = form.querySelector("button[type='submit']");
+
+trackEvent("Page View");
 
 form.addEventListener("submit", async (e) => {
     e.preventDefault();
@@ -828,6 +830,12 @@ form.addEventListener("submit", async (e) => {
         return;
     }
 
+    trackEvent("Upload Submit", {
+        plan: plan,
+        selected_count: String(checkedData.length),
+        range_days: String(days)
+    });
+
     message.innerHTML = "Processing Garmin export...<br><span style='font-size:13px;color:#6b7280;font-weight:400;'>This may take up to ~1 minute depending on file size and server startup time.</span>";
     message.style.color = "#374151";
 
@@ -859,6 +867,11 @@ form.addEventListener("submit", async (e) => {
                 errorMessage = "Request failed. Please check your input and try again.";
             }
 
+            trackEvent("Upload Failure", {
+                plan: plan,
+                error: errorMessage
+            });
+
             message.textContent = errorMessage;
             message.style.color = "#dc2626";
             return;
@@ -876,9 +889,20 @@ form.addEventListener("submit", async (e) => {
 
         window.URL.revokeObjectURL(url);
 
+        trackEvent("Upload Success", {
+            plan: plan,
+            selected_count: String(checkedData.length),
+            range_days: String(days)
+        });
+
         message.textContent = "Dataset downloaded.";
         message.style.color = "#16a34a";
     } catch (error) {
+        trackEvent("Upload Failure", {
+            plan: plan,
+            error: "network_error"
+        });
+
         message.textContent = "Network error. Please try again.";
         message.style.color = "#dc2626";
     } finally {
