@@ -1,4 +1,5 @@
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException
+from fastapi.responses import Response
 import zipfile
 import tempfile
 import os
@@ -19,20 +20,16 @@ async def upload_garmin_data(
     start_date: str = Form(...),
     end_date: str = Form(...)
 ):
+
     if not file.filename.endswith(".zip"):
-        raise HTTPException(status_code=400, detail="Please upload a .zip file")
+        raise HTTPException(status_code=400, detail="Upload a Garmin export zip")
 
     try:
         start_dt = datetime.strptime(start_date, "%Y-%m-%d").date()
         end_dt = datetime.strptime(end_date, "%Y-%m-%d").date()
 
-        if start_dt > end_dt:
-            raise HTTPException(
-                status_code=400,
-                detail="start_date must be before or equal to end_date"
-            )
-
         with tempfile.TemporaryDirectory() as temp_dir:
+
             zip_path = os.path.join(temp_dir, file.filename)
 
             with open(zip_path, "wb") as f:
@@ -47,23 +44,22 @@ async def upload_garmin_data(
 
             for root_dir, dirs, files in os.walk(temp_dir):
                 for name in files:
-                    lower_name = name.lower()
 
-                    if lower_name.startswith("udsfile_") and lower_name.endswith(".json"):
+                    lower = name.lower()
+
+                    if lower.startswith("udsfile_") and lower.endswith(".json"):
                         uds_files.append(os.path.join(root_dir, name))
 
-                    if lower_name.endswith("_sleepdata.json"):
+                    if lower.endswith("_sleepdata.json"):
                         sleep_files.append(os.path.join(root_dir, name))
 
-                    if "summarizedactivities" in lower_name and lower_name.endswith(".json"):
+                    if "summarizedactivities" in lower:
                         workout_files.append(os.path.join(root_dir, name))
-
-            if not uds_files:
-                raise HTTPException(status_code=404, detail="UDSFile json files not found in zip")
 
             daily_summary = []
 
             for uds_file in uds_files:
+
                 with open(uds_file, "r", encoding="utf-8") as f:
                     data = json.load(f)
 
@@ -71,20 +67,18 @@ async def upload_garmin_data(
                     continue
 
                 for item in data:
-                    if not isinstance(item, dict):
-                        continue
 
                     date_str = item.get("calendarDate")
+
                     if not date_str:
                         continue
 
-                    try:
-                        item_date = datetime.strptime(date_str, "%Y-%m-%d").date()
-                    except ValueError:
-                        continue
+                    item_date = datetime.strptime(date_str, "%Y-%m-%d").date()
 
                     if start_dt <= item_date <= end_dt:
-                        clean_item = {
+
+                        daily_summary.append({
+
                             "date": date_str,
                             "steps": item.get("totalSteps"),
                             "total_calories": item.get("totalKilocalories"),
@@ -96,13 +90,14 @@ async def upload_garmin_data(
                             "min_hr": item.get("minHeartRate"),
                             "max_hr": item.get("maxHeartRate"),
                             "moderate_intensity_minutes": item.get("moderateIntensityMinutes"),
-                            "vigorous_intensity_minutes": item.get("vigorousIntensityMinutes"),
-                        }
-                        daily_summary.append(clean_item)
+                            "vigorous_intensity_minutes": item.get("vigorousIntensityMinutes")
+
+                        })
 
             sleep = []
 
             for sleep_file in sleep_files:
+
                 with open(sleep_file, "r", encoding="utf-8") as f:
                     data = json.load(f)
 
@@ -110,76 +105,64 @@ async def upload_garmin_data(
                     continue
 
                 for item in data:
-                    if not isinstance(item, dict):
-                        continue
 
                     date_str = item.get("calendarDate")
+
                     if not date_str:
                         continue
 
-                    try:
-                        item_date = datetime.strptime(date_str, "%Y-%m-%d").date()
-                    except ValueError:
-                        continue
+                    item_date = datetime.strptime(date_str, "%Y-%m-%d").date()
 
                     if start_dt <= item_date <= end_dt:
-                        clean_item = {
+
+                        sleep.append({
+
                             "date": date_str,
                             "sleep_start_gmt": item.get("sleepStartTimestampGMT"),
                             "sleep_end_gmt": item.get("sleepEndTimestampGMT"),
-                            "deep_sleep_min": round((item.get("deepSleepSeconds") or 0) / 60),
-                            "light_sleep_min": round((item.get("lightSleepSeconds") or 0) / 60),
-                            "rem_sleep_min": round((item.get("remSleepSeconds") or 0) / 60),
-                            "awake_sleep_min": round((item.get("awakeSleepSeconds") or 0) / 60),
+                            "deep_sleep_min": round((item.get("deepSleepSeconds") or 0)/60),
+                            "light_sleep_min": round((item.get("lightSleepSeconds") or 0)/60),
+                            "rem_sleep_min": round((item.get("remSleepSeconds") or 0)/60),
+                            "awake_sleep_min": round((item.get("awakeSleepSeconds") or 0)/60),
                             "average_respiration": item.get("averageRespiration"),
                             "awake_count": item.get("awakeCount"),
-                            "sleep_score": (item.get("sleepScores") or {}).get("overallScore"),
-                        }
-                        sleep.append(clean_item)
+                            "sleep_score": (item.get("sleepScores") or {}).get("overallScore")
+
+                        })
 
             workouts = []
 
             for workout_file in workout_files:
+
                 with open(workout_file, "r", encoding="utf-8") as f:
                     data = json.load(f)
 
                 if isinstance(data, list):
-                    if len(data) > 0 and isinstance(data[0], dict) and "summarizedActivitiesExport" in data[0]:
-                        activities = data[0].get("summarizedActivitiesExport", [])
+
+                    if len(data) > 0 and "summarizedActivitiesExport" in data[0]:
+                        activities = data[0]["summarizedActivitiesExport"]
                     else:
                         activities = data
-                elif isinstance(data, dict):
-                    activities = data.get("summarizedActivitiesExport", [])
+
                 else:
                     activities = []
 
                 for act in activities:
-                    if not isinstance(act, dict):
+
+                    start_time = act.get("startTimeLocal")
+
+                    if start_time is None:
                         continue
 
-                    raw_start_time = act.get("startTimeLocal")
-                    if raw_start_time is None:
-                        continue
-
-                    workout_date = None
-
-                    if isinstance(raw_start_time, (int, float)):
-                        try:
-                            workout_date = datetime.fromtimestamp(raw_start_time / 1000).date()
-                        except Exception:
-                            continue
+                    if isinstance(start_time, (int, float)):
+                        workout_date = datetime.fromtimestamp(start_time/1000).date()
                     else:
-                        date_str = str(raw_start_time)
-                        try:
-                            workout_date = datetime.fromisoformat(date_str.replace("Z", "")).date()
-                        except ValueError:
-                            try:
-                                workout_date = datetime.strptime(date_str[:10], "%Y-%m-%d").date()
-                            except ValueError:
-                                continue
+                        continue
 
                     if start_dt <= workout_date <= end_dt:
-                        clean_item = {
+
+                        workouts.append({
+
                             "date": workout_date.isoformat(),
                             "sport": act.get("sportType"),
                             "name": act.get("name"),
@@ -190,32 +173,41 @@ async def upload_garmin_data(
                             "avg_hr": act.get("avgHr"),
                             "max_hr": act.get("maxHr"),
                             "calories": act.get("calories"),
-                            "start_time_local": raw_start_time,
-                            "activity_id": act.get("activityId"),
-                        }
-                        workouts.append(clean_item)
+                            "start_time_local": start_time,
+                            "activity_id": act.get("activityId")
 
-            daily_summary.sort(key=lambda x: x["date"])
-            sleep.sort(key=lambda x: x["date"])
-            workouts.sort(key=lambda x: x["date"])
+                        })
 
-            return {
+            result = {
+
                 "source": "garmin",
+
                 "date_range": {
                     "start": start_date,
                     "end": end_date
                 },
-                "included_data": ["daily_summary", "sleep", "workouts"],
-                "daily_summary": daily_summary,
-                "sleep": sleep,
-                "workouts": workouts
+
+                "included_data": [
+                    "daily_summary",
+                    "sleep",
+                    "workouts"
+                ],
+
+                "daily_summary": sorted(daily_summary, key=lambda x: x["date"]),
+                "sleep": sorted(sleep, key=lambda x: x["date"]),
+                "workouts": sorted(workouts, key=lambda x: x["date"])
+
             }
 
-    except zipfile.BadZipFile:
-        raise HTTPException(status_code=400, detail="Invalid zip file")
-    except ValueError:
-        raise HTTPException(status_code=400, detail="Date format must be YYYY-MM-DD")
-    except HTTPException:
-        raise
+            json_str = json.dumps(result, indent=2)
+
+            return Response(
+                content=json_str,
+                media_type="application/json",
+                headers={
+                    "Content-Disposition": "attachment; filename=train2ai_dataset.json"
+                }
+            )
+
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
