@@ -27,6 +27,7 @@ def home():
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>train2ai</title>
+<meta name="description" content="Turn Garmin exports into AI-ready datasets for ChatGPT, Claude, and Gemini.">
 <style>
     * { box-sizing: border-box; }
 
@@ -59,7 +60,15 @@ def home():
     .subtitle {
         color: #4b5563;
         font-size: 20px;
+        margin-bottom: 14px;
+    }
+
+    .for-who {
+        color: #374151;
+        font-size: 16px;
+        line-height: 1.7;
         margin-bottom: 24px;
+        max-width: 760px;
     }
 
     .lead {
@@ -121,6 +130,21 @@ def home():
         font-size: 14px;
     }
 
+    .limit-box {
+        margin-bottom: 18px;
+        background: #f8fafc;
+        border: 1px solid #dbe1ea;
+        border-radius: 16px;
+        padding: 14px 16px;
+        color: #374151;
+        line-height: 1.7;
+        font-size: 14px;
+    }
+
+    .limit-box strong {
+        color: #111827;
+    }
+
     label {
         display: block;
         font-weight: 700;
@@ -180,6 +204,7 @@ def home():
         grid-template-columns: 1fr 1fr;
         gap: 12px;
         margin-top: 8px;
+        margin-bottom: 6px;
     }
 
     .plan-card {
@@ -244,7 +269,7 @@ def home():
     }
 
     .small-note {
-        margin-top: 10px;
+        margin-top: 12px;
         font-size: 12px;
         color: #6b7280;
         line-height: 1.6;
@@ -375,9 +400,13 @@ def home():
             <h1>train2ai</h1>
             <div class="subtitle">Turn Garmin exports into AI-ready datasets</div>
 
+            <div class="for-who">
+                For athletes, coaches, and quantified-self users who want to analyze training data with AI.
+            </div>
+
             <p class="lead">
                 Upload your Garmin export ZIP and get clean JSON for ChatGPT, Claude, or Gemini.
-                train2ai does not analyze your data. It prepares your Garmin data for AI tools.
+                train2ai prepares structured datasets for AI tools. It does not perform AI analysis or coaching inside the app.
             </p>
 
             <div class="chips">
@@ -449,6 +478,15 @@ def home():
                 Upload your Garmin export ZIP, choose a date range, and download AI-ready JSON.
             </p>
 
+            <div class="limit-box">
+                <strong>Free plan</strong><br>
+                • Up to 7 days per export<br>
+                • 3 exports total<br>
+                • Garmin support<br><br>
+                <strong>Pro</strong><br>
+                Coming soon — longer date ranges and more sources, including Strava.
+            </div>
+
             <div class="plan-grid">
                 <div class="plan-card active">
                     <div class="plan-title">Free</div>
@@ -461,7 +499,7 @@ def home():
                     <div class="plan-title">Pro <span class="coming-soon">Coming soon</span></div>
                     <div class="plan-meta">
                         Up to 365 days per export<br>
-                        More sources and more data
+                        More sources and richer datasets
                     </div>
                 </div>
             </div>
@@ -510,24 +548,23 @@ def home():
 
             <div id="message" class="message"></div>
 
-            <div class="plan-note">
-                <strong>Free plan</strong><br>
-                • Up to 7 days per export<br>
-                • 3 exports total<br><br>
-                <strong>Pro plan</strong><br>
-                • Coming soon
-            </div>
-
             <div class="small-note">
-                This tool prepares structured JSON only. It does not provide in-app coaching or AI analysis.
+                train2ai prepares structured datasets only. It does not provide in-app AI analysis, coaching, or workout recommendations.
             </div>
         </div>
     </div>
 
     <div class="section">
+        <h2>Why train2ai?</h2>
+        <p class="section-lead">
+            Garmin exports can contain many files and inconsistent structures. train2ai extracts the useful parts and creates a clean dataset for AI tools.
+        </p>
+    </div>
+
+    <div class="section">
         <h2>How it works</h2>
         <p class="section-lead">
-            train2ai is for athletes and data-focused users who want structured Garmin data for AI analysis.
+            train2ai is built for people who want structured fitness data they can use with ChatGPT, Claude, Gemini, and other AI tools.
         </p>
 
         <div class="steps">
@@ -651,7 +688,7 @@ def home():
     </div>
 
     <div class="section">
-        <h2>Example output</h2>
+        <h2>Output schema (AI-friendly)</h2>
         <div class="code-box">
 <pre>{
   "source": "garmin",
@@ -791,7 +828,7 @@ form.addEventListener("submit", async (e) => {
         return;
     }
 
-    message.innerHTML = "Processing Garmin export...<br><span style='font-size:13px;color:#6b7280;font-weight:400;'>This may take up to ~1 minute depending on file size.</span>";
+    message.innerHTML = "Processing Garmin export...<br><span style='font-size:13px;color:#6b7280;font-weight:400;'>This may take up to ~1 minute depending on file size and server startup time.</span>";
     message.style.color = "#374151";
 
     submitButton.disabled = true;
