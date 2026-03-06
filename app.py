@@ -157,9 +157,13 @@ async def upload_garmin_data(
                     if not isinstance(act, dict):
                         continue
 
-                    date_str = act.get("startTimeLocal")
-                    if not date_str:
+                    raw_start_time = act.get("startTimeLocal")
+                    if raw_start_time is None:
                         continue
+
+                    date_str = str(raw_start_time)
+
+                    workout_date = None
 
                     try:
                         workout_date = datetime.fromisoformat(date_str.replace("Z", "")).date()
@@ -179,7 +183,7 @@ async def upload_garmin_data(
                             "avg_hr": act.get("avgHr"),
                             "max_hr": act.get("maxHr"),
                             "calories": act.get("calories"),
-                            "start_time_local": act.get("startTimeLocal"),
+                            "start_time_local": raw_start_time,
                             "activity_id": act.get("activityId"),
                         }
                         workouts.append(clean_item)
