@@ -133,10 +133,41 @@ def home():
         background: white;
     }
 
+    input[type="checkbox"] {
+        width: auto;
+        padding: 0;
+        border: none;
+        border-radius: 0;
+        margin: 0;
+    }
+
     .row {
         display: grid;
         grid-template-columns: 1fr 1fr;
         gap: 14px;
+    }
+
+    .checkbox-group {
+        margin-top: 8px;
+        display: grid;
+        gap: 10px;
+    }
+
+    .checkbox-item {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        padding: 10px 12px;
+        border: 1px solid #dbe1ea;
+        border-radius: 12px;
+        background: #fafbfc;
+    }
+
+    .checkbox-item label {
+        margin: 0;
+        font-weight: 600;
+        font-size: 14px;
+        cursor: pointer;
     }
 
     button {
@@ -217,9 +248,9 @@ def home():
         font-size: 15px;
     }
 
-    .grid-2 {
+    .grid-3 {
         display: grid;
-        grid-template-columns: 1fr 1fr;
+        grid-template-columns: repeat(3, 1fr);
         gap: 20px;
     }
 
@@ -242,6 +273,12 @@ def home():
         line-height: 1.9;
     }
 
+    .grid-2 {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 20px;
+    }
+
     .privacy-box {
         background: white;
         padding: 22px;
@@ -260,7 +297,7 @@ def home():
     }
 
     @media (max-width: 960px) {
-        .hero, .steps, .grid-2 {
+        .hero, .steps, .grid-2, .grid-3 {
             grid-template-columns: 1fr;
         }
 
@@ -306,15 +343,23 @@ def home():
             <div class="code-box">
 <pre>{
   "source": "garmin",
-  "schema_version": "1.0",
+  "schema_version": "1.1",
+  "plan": "free",
   "date_range": {
     "start": "2026-01-01",
     "end": "2026-01-06"
   },
+  "included_data": [
+    "daily_summary",
+    "sleep",
+    "workouts"
+  ],
   "daily_summary": [
     {
       "date": "2026-01-01",
       "steps": 8120,
+      "total_calories": 2410.0,
+      "active_calories": 534.0,
       "distance_km": 6.3,
       "resting_hr": 41
     }
@@ -322,7 +367,10 @@ def home():
   "sleep": [
     {
       "date": "2026-01-01",
+      "sleep_start": "2025-12-31T14:12:00",
+      "sleep_end": "2026-01-01T00:48:00",
       "deep_sleep_min": 72,
+      "light_sleep_min": 248,
       "rem_sleep_min": 88
     }
   ],
@@ -331,9 +379,16 @@ def home():
       "date": "2026-01-04",
       "sport": "CYCLING",
       "distance_km": 40.01,
-      "duration_min": 205.3
+      "duration_min": 205.3,
+      "avg_hr": 128.0,
+      "max_hr": 168.0
     }
-  ]
+  ],
+  "record_counts": {
+    "daily_summary": 6,
+    "sleep": 6,
+    "workouts": 4
+  }
 }</pre>
             </div>
         </div>
@@ -366,6 +421,24 @@ def home():
                     <option value="pro">Pro</option>
                 </select>
 
+                <label>Choose data to include</label>
+                <div class="checkbox-group">
+                    <div class="checkbox-item">
+                        <input type="checkbox" id="daily_summary" name="included_data" value="daily_summary" checked>
+                        <label for="daily_summary">Daily summary</label>
+                    </div>
+
+                    <div class="checkbox-item">
+                        <input type="checkbox" id="sleep" name="included_data" value="sleep" checked>
+                        <label for="sleep">Sleep</label>
+                    </div>
+
+                    <div class="checkbox-item">
+                        <input type="checkbox" id="workouts" name="included_data" value="workouts" checked>
+                        <label for="workouts">Workouts</label>
+                    </div>
+                </div>
+
                 <button type="submit">Generate dataset</button>
             </form>
 
@@ -396,8 +469,8 @@ def home():
 
             <div class="step">
                 <div class="step-num">Step 2</div>
-                <h3>Upload ZIP and choose dates</h3>
-                <p>Select the date range you want, then upload the Garmin export ZIP.</p>
+                <h3>Choose data and date range</h3>
+                <p>Select the period and the data types you want in the output.</p>
             </div>
 
             <div class="step">
@@ -436,6 +509,51 @@ def home():
     </div>
 
     <div class="section">
+        <h2>What you get</h2>
+        <p class="section-lead">
+            train2ai extracts structured Garmin data and returns it in a format that is easy for both humans and AI tools to read.
+        </p>
+
+        <div class="grid-3">
+            <div class="info-card">
+                <h3>Daily summary</h3>
+                <ul>
+                    <li>date</li>
+                    <li>steps</li>
+                    <li>total_calories</li>
+                    <li>active_calories</li>
+                    <li>distance_km</li>
+                    <li>resting_hr</li>
+                </ul>
+            </div>
+
+            <div class="info-card">
+                <h3>Sleep</h3>
+                <ul>
+                    <li>date</li>
+                    <li>sleep_start</li>
+                    <li>sleep_end</li>
+                    <li>deep_sleep_min</li>
+                    <li>light_sleep_min</li>
+                    <li>rem_sleep_min</li>
+                </ul>
+            </div>
+
+            <div class="info-card">
+                <h3>Workouts</h3>
+                <ul>
+                    <li>date</li>
+                    <li>sport</li>
+                    <li>distance_km</li>
+                    <li>duration_min</li>
+                    <li>avg_hr</li>
+                    <li>max_hr</li>
+                </ul>
+            </div>
+        </div>
+    </div>
+
+    <div class="section">
         <h2>Supported data</h2>
         <div class="grid-2">
             <div class="info-card">
@@ -444,6 +562,8 @@ def home():
                     <li>Daily summary</li>
                     <li>Sleep totals</li>
                     <li>Workout summaries</li>
+                    <li>included_data in output JSON</li>
+                    <li>record_counts in output JSON</li>
                 </ul>
             </div>
 
@@ -454,6 +574,7 @@ def home():
                     <li>No second-by-second workout time series</li>
                     <li>No sleep stage timeline</li>
                     <li>No in-app AI analysis</li>
+                    <li>No coaching inside the app</li>
                 </ul>
             </div>
         </div>
@@ -464,12 +585,17 @@ def home():
         <div class="code-box">
 <pre>{
   "source": "garmin",
-  "schema_version": "1.0",
+  "schema_version": "1.1",
   "plan": "free",
   "date_range": {
     "start": "2026-01-01",
     "end": "2026-01-06"
   },
+  "included_data": [
+    "daily_summary",
+    "sleep",
+    "workouts"
+  ],
   "daily_summary": [
     {
       "date": "2026-01-01",
@@ -478,6 +604,26 @@ def home():
       "active_calories": 534.0,
       "distance_km": 6.3,
       "resting_hr": 41
+    }
+  ],
+  "sleep": [
+    {
+      "date": "2026-01-01",
+      "sleep_start": "2025-12-31T14:12:00",
+      "sleep_end": "2026-01-01T00:48:00",
+      "deep_sleep_min": 72,
+      "light_sleep_min": 248,
+      "rem_sleep_min": 88
+    }
+  ],
+  "workouts": [
+    {
+      "date": "2026-01-04",
+      "sport": "CYCLING",
+      "distance_km": 40.01,
+      "duration_min": 205.3,
+      "avg_hr": 128.0,
+      "max_hr": 168.0
     }
   ],
   "record_counts": {
@@ -515,9 +661,16 @@ form.addEventListener("submit", async (e) => {
     const startDate = form.querySelector('input[name="start_date"]').value;
     const endDate = form.querySelector('input[name="end_date"]').value;
     const plan = form.querySelector('select[name="plan"]').value;
+    const checkedData = Array.from(form.querySelectorAll('input[name="included_data"]:checked')).map(el => el.value);
 
     if (!startDate || !endDate) {
         message.textContent = "Please select both start date and end date.";
+        message.style.color = "#dc2626";
+        return;
+    }
+
+    if (checkedData.length === 0) {
+        message.textContent = "Please select at least one data type.";
         message.style.color = "#dc2626";
         return;
     }
@@ -630,6 +783,17 @@ def parse_garmin_datetime(dt):
         return None
 
 
+def normalize_included_data(values):
+    allowed = {"daily_summary", "sleep", "workouts"}
+    cleaned = []
+
+    for v in values:
+        if v in allowed and v not in cleaned:
+            cleaned.append(v)
+
+    return cleaned
+
+
 def enforce_plan_limit(plan, start, end):
     days = (end - start).days + 1
 
@@ -684,12 +848,18 @@ async def upload(
     file: UploadFile = File(...),
     start_date: str = Form(...),
     end_date: str = Form(...),
-    plan: str = Form("free")
+    plan: str = Form("free"),
+    included_data: list[str] = Form(...)
 ):
     ip = request.client.host if request.client else "unknown"
 
     if not file.filename or not file.filename.lower().endswith(".zip"):
         raise HTTPException(status_code=400, detail="Upload a Garmin export zip.")
+
+    selected = normalize_included_data(included_data)
+
+    if len(selected) == 0:
+        raise HTTPException(status_code=400, detail="Please select at least one data type.")
 
     start = parse_input_date(start_date, "start_date")
     end = parse_input_date(end_date, "end_date")
@@ -729,124 +899,126 @@ async def upload(
                         workout_files.append(path)
 
             daily_summary = []
-
-            for file_path in uds_files:
-                try:
-                    with open(file_path, "r", encoding="utf-8") as f:
-                        data = json.load(f)
-                except Exception:
-                    continue
-
-                if not isinstance(data, list):
-                    continue
-
-                for item in data:
-                    date = item.get("calendarDate")
-                    if not date:
-                        continue
-
-                    try:
-                        d = datetime.strptime(date, "%Y-%m-%d").date()
-                    except ValueError:
-                        continue
-
-                    if start <= d <= end:
-                        dist = item.get("totalDistanceMeters")
-
-                        daily_summary.append({
-                            "date": date,
-                            "steps": item.get("totalSteps"),
-                            "total_calories": item.get("totalKilocalories"),
-                            "active_calories": item.get("activeKilocalories"),
-                            "distance_km": round(dist / 1000, 2) if dist is not None else None,
-                            "resting_hr": item.get("restingHeartRate")
-                        })
-
             sleep = []
-
-            for file_path in sleep_files:
-                try:
-                    with open(file_path, "r", encoding="utf-8") as f:
-                        data = json.load(f)
-                except Exception:
-                    continue
-
-                if not isinstance(data, list):
-                    continue
-
-                for item in data:
-                    date = item.get("calendarDate")
-                    if not date:
-                        continue
-
-                    try:
-                        d = datetime.strptime(date, "%Y-%m-%d").date()
-                    except ValueError:
-                        continue
-
-                    if start <= d <= end:
-                        sleep.append({
-                            "date": date,
-                            "sleep_start": parse_garmin_datetime(item.get("sleepStartTimestampGMT")),
-                            "sleep_end": parse_garmin_datetime(item.get("sleepEndTimestampGMT")),
-                            "deep_sleep_min": round((item.get("deepSleepSeconds") or 0) / 60),
-                            "light_sleep_min": round((item.get("lightSleepSeconds") or 0) / 60),
-                            "rem_sleep_min": round((item.get("remSleepSeconds") or 0) / 60)
-                        })
-
             workouts = []
 
-            for file_path in workout_files:
-                try:
-                    with open(file_path, "r", encoding="utf-8") as f:
-                        data = json.load(f)
-                except Exception:
-                    continue
-
-                if isinstance(data, list):
-                    if len(data) > 0 and isinstance(data[0], dict) and "summarizedActivitiesExport" in data[0]:
-                        activities = data[0]["summarizedActivitiesExport"]
-                    else:
-                        activities = data
-                else:
-                    activities = []
-
-                for act in activities:
-                    start_time = act.get("startTimeLocal")
-
-                    if not isinstance(start_time, (int, float)):
+            if "daily_summary" in selected:
+                for file_path in uds_files:
+                    try:
+                        with open(file_path, "r", encoding="utf-8") as f:
+                            data = json.load(f)
+                    except Exception:
                         continue
 
-                    date = datetime.fromtimestamp(start_time / 1000, tz=timezone.utc).date()
+                    if not isinstance(data, list):
+                        continue
 
-                    if start <= date <= end:
-                        dist = act.get("distance")
-                        dur = act.get("duration")
+                    for item in data:
+                        date = item.get("calendarDate")
+                        if not date:
+                            continue
 
-                        workouts.append({
-                            "date": date.isoformat(),
-                            "sport": act.get("sportType"),
-                            "distance_km": round(dist / 100000, 2) if dist is not None else None,
-                            "duration_min": round(dur / 60000, 1) if dur is not None else None,
-                            "avg_hr": act.get("avgHr"),
-                            "max_hr": act.get("maxHr")
-                        })
+                        try:
+                            d = datetime.strptime(date, "%Y-%m-%d").date()
+                        except ValueError:
+                            continue
+
+                        if start <= d <= end:
+                            dist = item.get("totalDistanceMeters")
+
+                            daily_summary.append({
+                                "date": date,
+                                "steps": item.get("totalSteps"),
+                                "total_calories": item.get("totalKilocalories"),
+                                "active_calories": item.get("activeKilocalories"),
+                                "distance_km": round(dist / 1000, 2) if dist is not None else None,
+                                "resting_hr": item.get("restingHeartRate")
+                            })
+
+            if "sleep" in selected:
+                for file_path in sleep_files:
+                    try:
+                        with open(file_path, "r", encoding="utf-8") as f:
+                            data = json.load(f)
+                    except Exception:
+                        continue
+
+                    if not isinstance(data, list):
+                        continue
+
+                    for item in data:
+                        date = item.get("calendarDate")
+                        if not date:
+                            continue
+
+                        try:
+                            d = datetime.strptime(date, "%Y-%m-%d").date()
+                        except ValueError:
+                            continue
+
+                        if start <= d <= end:
+                            sleep.append({
+                                "date": date,
+                                "sleep_start": parse_garmin_datetime(item.get("sleepStartTimestampGMT")),
+                                "sleep_end": parse_garmin_datetime(item.get("sleepEndTimestampGMT")),
+                                "deep_sleep_min": round((item.get("deepSleepSeconds") or 0) / 60),
+                                "light_sleep_min": round((item.get("lightSleepSeconds") or 0) / 60),
+                                "rem_sleep_min": round((item.get("remSleepSeconds") or 0) / 60)
+                            })
+
+            if "workouts" in selected:
+                for file_path in workout_files:
+                    try:
+                        with open(file_path, "r", encoding="utf-8") as f:
+                            data = json.load(f)
+                    except Exception:
+                        continue
+
+                    if isinstance(data, list):
+                        if len(data) > 0 and isinstance(data[0], dict) and "summarizedActivitiesExport" in data[0]:
+                            activities = data[0]["summarizedActivitiesExport"]
+                        else:
+                            activities = data
+                    else:
+                        activities = []
+
+                    for act in activities:
+                        start_time = act.get("startTimeLocal")
+
+                        if not isinstance(start_time, (int, float)):
+                            continue
+
+                        date = datetime.fromtimestamp(start_time / 1000, tz=timezone.utc).date()
+
+                        if start <= date <= end:
+                            dist = act.get("distance")
+                            dur = act.get("duration")
+
+                            workouts.append({
+                                "date": date.isoformat(),
+                                "sport": act.get("sportType"),
+                                "distance_km": round(dist / 100000, 2) if dist is not None else None,
+                                "duration_min": round(dur / 60000, 1) if dur is not None else None,
+                                "avg_hr": act.get("avgHr"),
+                                "max_hr": act.get("maxHr")
+                            })
 
             result = {
                 "source": "garmin",
-                "schema_version": "1.0",
+                "schema_version": "1.1",
                 "plan": plan,
                 "date_range": {
                     "start": start_date,
                     "end": end_date
                 },
-                "daily_summary": sorted(daily_summary, key=lambda x: x["date"]),
-                "sleep": sorted(sleep, key=lambda x: x["date"]),
-                "workouts": sorted(workouts, key=lambda x: x["date"]),
+                "included_data": selected,
+                "daily_summary": sorted(daily_summary, key=lambda x: x["date"]) if "daily_summary" in selected else [],
+                "sleep": sorted(sleep, key=lambda x: x["date"]) if "sleep" in selected else [],
+                "workouts": sorted(workouts, key=lambda x: x["date"]) if "workouts" in selected else [],
                 "record_counts": {
-                    "daily_summary": len(daily_summary),
-                    "sleep": len(sleep),
-                    "workouts": len(workouts)
+                    "daily_summary": len(daily_summary) if "daily_summary" in selected else 0,
+                    "sleep": len(sleep) if "sleep" in selected else 0,
+                    "workouts": len(workouts) if "workouts" in selected else 0
                 }
             }
 
