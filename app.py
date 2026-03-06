@@ -149,6 +149,7 @@ def home():
     }
 
     button:hover { opacity: 0.95; }
+
     button:disabled {
         opacity: 0.65;
         cursor: not-allowed;
@@ -298,7 +299,8 @@ def home():
                 <div class="chip">Workouts</div>
                 <div class="chip">Free: 7 days</div>
                 <div class="chip">3 exports / month</div>
-                <div class="chip">Strava later</div>
+                <div class="chip">Garmin supported</div>
+                <div class="chip">Strava coming soon</div>
             </div>
 
             <div class="code-box">
@@ -306,17 +308,32 @@ def home():
   "source": "garmin",
   "schema_version": "1.0",
   "date_range": {
-    "start": "2026-02-06",
-    "end": "2026-02-12"
+    "start": "2026-01-01",
+    "end": "2026-01-06"
   },
-  "daily_summary": [...],
-  "sleep": [...],
-  "workouts": [...],
-  "record_counts": {
-    "daily_summary": 7,
-    "sleep": 7,
-    "workouts": 5
-  }
+  "daily_summary": [
+    {
+      "date": "2026-01-01",
+      "steps": 8120,
+      "distance_km": 6.3,
+      "resting_hr": 41
+    }
+  ],
+  "sleep": [
+    {
+      "date": "2026-01-01",
+      "deep_sleep_min": 72,
+      "rem_sleep_min": 88
+    }
+  ],
+  "workouts": [
+    {
+      "date": "2026-01-04",
+      "sport": "CYCLING",
+      "distance_km": 40.01,
+      "duration_min": 205.3
+    }
+  ]
 }</pre>
             </div>
         </div>
@@ -355,8 +372,11 @@ def home():
             <div id="message" class="message"></div>
 
             <div class="plan-note">
-                Free: up to 7 days per export and 3 exports per month.<br>
-                Pro: up to 365 days per export.
+                <strong>Free plan</strong><br>
+                • Up to 7 days per export<br>
+                • 3 exports per month<br><br>
+                <strong>Pro plan</strong><br>
+                • Up to 365 days per export
             </div>
         </div>
     </div>
@@ -443,22 +463,28 @@ def home():
         <h2>Example output</h2>
         <div class="code-box">
 <pre>{
+  "source": "garmin",
+  "schema_version": "1.0",
+  "plan": "free",
+  "date_range": {
+    "start": "2026-01-01",
+    "end": "2026-01-06"
+  },
   "daily_summary": [
     {
-      "date": "2026-02-11",
-      "steps": 3397,
-      "distance_km": 26.2,
-      "resting_hr": 36
+      "date": "2026-01-01",
+      "steps": 8120,
+      "total_calories": 2410.0,
+      "active_calories": 534.0,
+      "distance_km": 6.3,
+      "resting_hr": 41
     }
   ],
-  "workouts": [
-    {
-      "date": "2026-02-11",
-      "sport": "CYCLING",
-      "distance_km": 15.09,
-      "duration_min": 114.2
-    }
-  ]
+  "record_counts": {
+    "daily_summary": 6,
+    "sleep": 6,
+    "workouts": 4
+  }
 }</pre>
         </div>
     </div>
@@ -581,6 +607,11 @@ form.addEventListener("submit", async (e) => {
 </body>
 </html>
 """
+
+
+@app.get("/health")
+def health():
+    return {"status": "ok"}
 
 
 def parse_input_date(date_str, field):
