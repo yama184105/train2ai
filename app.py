@@ -43,6 +43,7 @@ async def upload_garmin_data(
 
             uds_files = []
             sleep_files = []
+            workout_files = []
 
             for root_dir, dirs, files in os.walk(temp_dir):
                 for name in files:
@@ -53,6 +54,9 @@ async def upload_garmin_data(
 
                     if lower_name.endswith("_sleepdata.json"):
                         sleep_files.append(os.path.join(root_dir, name))
+
+                    if "summarizedactivities" in lower_name and lower_name.endswith(".json"):
+                        workout_files.append(os.path.join(root_dir, name))
 
             if not uds_files:
                 raise HTTPException(status_code=404, detail="UDSFile json files not found in zip")
@@ -133,8 +137,56 @@ async def upload_garmin_data(
                         }
                         sleep.append(clean_item)
 
+            workouts = []
+
+            for workout_file in workout_files:
+                with open(workout_file, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+
+                if isinstance(data, list):
+                    if len(data) > 0 and isinstance(data[0], dict) and "summarizedActivitiesExport" in data[0]:
+                        activities = data[0].get("summarizedActivitiesExport", [])
+                    else:
+                        activities = data
+                elif isinstance(data, dict):
+                    activities = data.get("summarizedActivitiesExport", [])
+                else:
+                    activities = []
+
+                for act in activities:
+                    if not isinstance(act, dict):
+                        continue
+
+                    date_str = act.get("startTimeLocal")
+                    if not date_str:
+                        continue
+
+                    try:
+                        workout_date = datetime.fromisoformat(date_str.replace("Z", "")).date()
+                    except ValueError:
+                        try:
+                            workout_date = datetime.strptime(date_str[:10], "%Y-%m-%d").date()
+                        except ValueError:
+                            continue
+
+                    if start_dt <= workout_date <= end_dt:
+                        clean_item = {
+                            "date": workout_date.isoformat(),
+                            "sport": act.get("sportType"),
+                            "distance_m": act.get("distance"),
+                            "duration_s": act.get("duration"),
+                            "avg_speed": act.get("avgSpeed"),
+                            "avg_hr": act.get("avgHr"),
+                            "max_hr": act.get("maxHr"),
+                            "calories": act.get("calories"),
+                            "start_time_local": act.get("startTimeLocal"),
+                            "activity_id": act.get("activityId"),
+                        }
+                        workouts.append(clean_item)
+
             daily_summary.sort(key=lambda x: x["date"])
             sleep.sort(key=lambda x: x["date"])
+            workouts.sort(key=lambda x: x["date"])
 
             return {
                 "source": "garmin",
@@ -142,9 +194,10 @@ async def upload_garmin_data(
                     "start": start_date,
                     "end": end_date
                 },
-                "included_data": ["daily_summary", "sleep"],
+                "included_data": ["daily_summary", "sleep", "workouts"],
                 "daily_summary": daily_summary,
-                "sleep": sleep
+                "sleep": sleep,
+                "workouts": workouts
             }
 
     except zipfile.BadZipFile:
