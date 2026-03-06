@@ -26,6 +26,7 @@ def home():
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="google-site-verification" content="mu9LCPob_32j9WIENxfsAQeU7HNr_56FkWXv31TGg2I" />
 <title>train2ai</title>
 <meta name="description" content="Turn Garmin exports into AI-ready datasets for ChatGPT, Claude, and Gemini.">
 <script defer data-domain="train2ai.onrender.com" src="https://plausible.io/js/script.js"></script>
@@ -783,8 +784,6 @@ const form = document.getElementById("uploadForm");
 const message = document.getElementById("message");
 const submitButton = form.querySelector("button[type='submit']");
 
-trackEvent("Page View");
-
 form.addEventListener("submit", async (e) => {
     e.preventDefault();
 
@@ -836,15 +835,58 @@ form.addEventListener("submit", async (e) => {
         range_days: String(days)
     });
 
-    message.innerHTML = "Processing Garmin export...<br><span style='font-size:13px;color:#6b7280;font-weight:400;'>This may take up to ~1 minute depending on file size and server startup time.</span>";
+    submitButton.disabled = true;
+    submitButton.textContent = "Checking...";
+    message.textContent = "Checking plan limits...";
     message.style.color = "#374151";
 
-    submitButton.disabled = true;
-    submitButton.textContent = "Processing...";
-
-    const formData = new FormData(form);
+    const precheckData = new FormData();
+    precheckData.append("start_date", startDate);
+    precheckData.append("end_date", endDate);
+    precheckData.append("plan", plan);
 
     try {
+        const precheckRes = await fetch("/precheck", {
+            method: "POST",
+            body: precheckData
+        });
+
+        const precheckContentType = precheckRes.headers.get("content-type") || "";
+
+        if (!precheckRes.ok) {
+            let errorMessage = "Precheck failed.";
+
+            try {
+                if (precheckContentType.includes("application/json")) {
+                    const err = await precheckRes.json();
+                    errorMessage = err.detail || errorMessage;
+                } else {
+                    const text = await precheckRes.text();
+                    if (text) errorMessage = text;
+                }
+            } catch (_) {
+                errorMessage = "Request failed. Please check your input and try again.";
+            }
+
+            trackEvent("Upload Failure", {
+                plan: plan,
+                error: errorMessage,
+                stage: "precheck"
+            });
+
+            message.textContent = errorMessage;
+            message.style.color = "#dc2626";
+            submitButton.disabled = false;
+            submitButton.textContent = "Generate dataset";
+            return;
+        }
+
+        message.innerHTML = "Processing Garmin export...<br><span style='font-size:13px;color:#6b7280;font-weight:400;'>This may take up to ~1 minute depending on file size and server startup time.</span>";
+        message.style.color = "#374151";
+        submitButton.textContent = "Processing...";
+
+        const formData = new FormData(form);
+
         const res = await fetch("/upload", {
             method: "POST",
             body: formData
@@ -869,7 +911,8 @@ form.addEventListener("submit", async (e) => {
 
             trackEvent("Upload Failure", {
                 plan: plan,
-                error: errorMessage
+                error: errorMessage,
+                stage: "upload"
             });
 
             message.textContent = errorMessage;
@@ -998,13 +1041,20 @@ def save_usage(data):
         json.dump(data, f, ensure_ascii=False, indent=2)
 
 
-def check_usage_limit(ip, plan):
+def get_usage_count(ip, plan):
     if plan != "free":
-        return
+        return 0
 
     data = load_usage()
     totals = data.get("free_total_by_ip", {})
-    count = totals.get(ip, 0)
+    return totals.get(ip, 0)
+
+
+def check_usage_limit_only(ip, plan):
+    if plan != "free":
+        return
+
+    count = get_usage_count(ip, plan)
 
     if count >= FREE_TOTAL_LIMIT:
         raise HTTPException(
@@ -1012,9 +1062,46 @@ def check_usage_limit(ip, plan):
             detail=f"Free plan total limit reached ({FREE_TOTAL_LIMIT} exports)."
         )
 
-    totals[ip] = count + 1
+
+def increment_usage(ip, plan):
+    if plan != "free":
+        return
+
+    data = load_usage()
+    totals = data.get("free_total_by_ip", {})
+    totals[ip] = totals.get(ip, 0) + 1
     data["free_total_by_ip"] = totals
     save_usage(data)
+
+
+@app.post("/precheck")
+async def precheck(
+    request: Request,
+    start_date: str = Form(...),
+    end_date: str = Form(...),
+    plan: str = Form("free")
+):
+    ip = get_client_ip(request)
+
+    validate_plan(plan)
+
+    start = parse_input_date(start_date, "start_date")
+    end = parse_input_date(end_date, "end_date")
+
+    if start > end:
+        raise HTTPException(status_code=400, detail="End date must be on or after start date.")
+
+    enforce_plan_limit(plan, start, end)
+    check_usage_limit_only(ip, plan)
+
+    used = get_usage_count(ip, plan)
+    remaining = max(FREE_TOTAL_LIMIT - used, 0) if plan == "free" else None
+
+    return {
+        "ok": True,
+        "used_exports": used,
+        "remaining_exports": remaining
+    }
 
 
 def collect_daily_summary(uds_files, start, end):
@@ -1159,7 +1246,7 @@ async def upload(
         raise HTTPException(status_code=400, detail="End date must be on or after start date.")
 
     enforce_plan_limit(plan, start, end)
-    check_usage_limit(ip, plan)
+    check_usage_limit_only(ip, plan)
 
     try:
         with tempfile.TemporaryDirectory() as temp:
@@ -1212,6 +1299,8 @@ async def upload(
 
             json_str = json.dumps(result, indent=2, ensure_ascii=False)
 
+            increment_usage(ip, plan)
+
             return Response(
                 content=json_str,
                 media_type="application/json",
@@ -1222,5 +1311,5 @@ async def upload(
         raise
     except zipfile.BadZipFile:
         raise HTTPException(status_code=400, detail="Invalid ZIP file.")
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+    except Exception:
+        raise HTTPException(status_code=500, detail="Internal server error.")
