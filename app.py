@@ -1,5 +1,5 @@
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException
-from fastapi.responses import Response
+from fastapi.responses import Response, HTMLResponse
 import zipfile
 import tempfile
 import os
@@ -9,9 +9,123 @@ from datetime import datetime, timezone
 app = FastAPI()
 
 
-@app.get("/")
-def root():
-    return {"message": "train2ai API running"}
+@app.get("/", response_class=HTMLResponse)
+def home():
+    return """
+    <!DOCTYPE html>
+    <html lang="en">
+    <head>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <title>train2ai</title>
+        <style>
+            body {
+                font-family: Arial, sans-serif;
+                max-width: 720px;
+                margin: 40px auto;
+                padding: 0 20px;
+                line-height: 1.6;
+                color: #222;
+            }
+            h1 {
+                margin-bottom: 8px;
+            }
+            .subtitle {
+                color: #555;
+                margin-bottom: 24px;
+            }
+            .card {
+                border: 1px solid #ddd;
+                border-radius: 12px;
+                padding: 24px;
+                background: #fafafa;
+            }
+            label {
+                display: block;
+                font-weight: bold;
+                margin-top: 16px;
+                margin-bottom: 6px;
+            }
+            input[type="file"],
+            input[type="date"],
+            select,
+            button {
+                width: 100%;
+                padding: 10px;
+                font-size: 14px;
+                box-sizing: border-box;
+            }
+            button {
+                margin-top: 24px;
+                background: #111;
+                color: white;
+                border: none;
+                border-radius: 8px;
+                cursor: pointer;
+            }
+            button:hover {
+                opacity: 0.92;
+            }
+            .note {
+                margin-top: 20px;
+                padding: 14px;
+                background: #fff;
+                border: 1px solid #e5e5e5;
+                border-radius: 8px;
+                font-size: 14px;
+                color: #444;
+            }
+            .small {
+                font-size: 13px;
+                color: #666;
+                margin-top: 18px;
+            }
+        </style>
+    </head>
+    <body>
+        <h1>train2ai</h1>
+        <div class="subtitle">
+            Turn Garmin data into AI-ready JSON.
+        </div>
+
+        <div class="card">
+            <form action="/upload" method="post" enctype="multipart/form-data">
+                <label for="file">Garmin export ZIP</label>
+                <input type="file" id="file" name="file" accept=".zip" required />
+
+                <label for="start_date">Start date</label>
+                <input type="date" id="start_date" name="start_date" required />
+
+                <label for="end_date">End date</label>
+                <input type="date" id="end_date" name="end_date" required />
+
+                <label for="plan">Plan</label>
+                <select id="plan" name="plan" required>
+                    <option value="free" selected>Free</option>
+                    <option value="pro">Pro</option>
+                </select>
+
+                <button type="submit">Generate dataset</button>
+            </form>
+
+            <div class="note">
+                <strong>Free plan:</strong> up to 7 days per export.<br>
+                <strong>Pro plan:</strong> up to 365 days per export.
+            </div>
+
+            <div class="small">
+                Supported data: daily summary, sleep, workouts.<br>
+                We do not analyze your data. We prepare it for AI tools.
+            </div>
+        </div>
+    </body>
+    </html>
+    """
+
+
+@app.get("/health")
+def health():
+    return {"status": "ok"}
 
 
 def parse_input_date(date_str: str, field_name: str):
@@ -25,23 +139,39 @@ def parse_input_date(date_str: str, field_name: str):
 
 
 def parse_garmin_datetime(dt_str):
-    if not dt_str:
+    if not dt_str or not isinstance(dt_str, str):
         return None
-    if not isinstance(dt_str, str):
-        return None
-
-    # Garminの "2026-02-01T12:30:42.0" のような形式を想定
     try:
         return datetime.fromisoformat(dt_str).isoformat()
     except ValueError:
         return None
 
 
+def enforce_plan_limit(plan: str, start_dt, end_dt):
+    days_inclusive = (end_dt - start_dt).days + 1
+
+    if plan == "free":
+        if days_inclusive > 7:
+            raise HTTPException(
+                status_code=400,
+                detail="Free plan supports up to 7 days per export."
+            )
+    elif plan == "pro":
+        if days_inclusive > 365:
+            raise HTTPException(
+                status_code=400,
+                detail="Pro plan supports up to 365 days per export."
+            )
+    else:
+        raise HTTPException(status_code=400, detail="Invalid plan. Use free or pro.")
+
+
 @app.post("/upload")
 async def upload_garmin_data(
     file: UploadFile = File(...),
     start_date: str = Form(...),
-    end_date: str = Form(...)
+    end_date: str = Form(...),
+    plan: str = Form("free")
 ):
     if not file.filename or not file.filename.lower().endswith(".zip"):
         raise HTTPException(status_code=400, detail="Upload a Garmin export zip")
@@ -54,6 +184,8 @@ async def upload_garmin_data(
             status_code=400,
             detail="start_date must be on or before end_date"
         )
+
+    enforce_plan_limit(plan, start_dt, end_dt)
 
     try:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -181,10 +313,7 @@ async def upload_garmin_data(
 
                 for act in activities:
                     start_time = act.get("startTimeLocal")
-                    if start_time is None:
-                        continue
-
-                    if not isinstance(start_time, (int, float)):
+                    if start_time is None or not isinstance(start_time, (int, float)):
                         continue
 
                     workout_date = datetime.fromtimestamp(
@@ -196,7 +325,6 @@ async def upload_garmin_data(
                         distance_raw = act.get("distance")
                         duration_raw = act.get("duration")
 
-                        # Garmin summarizedActivities は distance=cm, duration=ms とみなす
                         distance_m = round(distance_raw / 100, 2) if distance_raw is not None else None
                         distance_km = round(distance_raw / 100000, 2) if distance_raw is not None else None
                         duration_s = round(duration_raw / 1000, 1) if duration_raw is not None else None
@@ -221,7 +349,7 @@ async def upload_garmin_data(
                             "max_hr": act.get("maxHr"),
                             "calories": act.get("calories"),
                             "start_time_local": start_time,
-                            "start_time_local_iso": datetime.fromtimestamp(
+                            "start_time_utc_iso": datetime.fromtimestamp(
                                 start_time / 1000,
                                 tz=timezone.utc
                             ).isoformat(),
@@ -230,7 +358,8 @@ async def upload_garmin_data(
 
             result = {
                 "source": "garmin",
-                "schema_version": "1.1",
+                "schema_version": "1.2",
+                "plan": plan,
                 "date_range": {
                     "start": start_date,
                     "end": end_date
