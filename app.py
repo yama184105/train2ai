@@ -5,7 +5,7 @@ import zipfile
 import tempfile
 import os
 import json
-from datetime import datetime, timezone
+from datetime import datetime, timezone, date
 
 app = FastAPI()
 
@@ -28,7 +28,7 @@ def home():
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <meta name="google-site-verification" content="mu9LCPob_32j9WIENxfsAQeU7HNr_56FkWXv31TGg2I" />
 <title>train2ai</title>
-<meta name="description" content="Turn Garmin exports into AI-ready datasets for ChatGPT, Claude, and Gemini.">
+<meta name="description" content="Turn Garmin exports into AI-ready JSON datasets for ChatGPT, Claude, and Gemini. Upload a Garmin export ZIP and get structured daily summary, sleep, and workout summaries." />
 <script defer data-domain="train2ai.onrender.com" src="https://plausible.io/js/script.js"></script>
 <style>
     * { box-sizing: border-box; }
@@ -155,13 +155,14 @@ def home():
         font-size: 14px;
     }
 
-    input, select, button {
+    input, select, button, .secondary-link {
         width: 100%;
         padding: 13px 14px;
         border-radius: 12px;
         border: 1px solid #d1d5db;
         font-size: 15px;
         background: white;
+        text-decoration: none;
     }
 
     input[type="checkbox"] {
@@ -256,6 +257,14 @@ def home():
         cursor: not-allowed;
     }
 
+    .secondary-link {
+        display: inline-block;
+        margin-top: 10px;
+        text-align: center;
+        color: #111827;
+        font-weight: 700;
+    }
+
     .message {
         margin-top: 14px;
         min-height: 22px;
@@ -324,6 +333,12 @@ def home():
         gap: 20px;
     }
 
+    .grid-2 {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 20px;
+    }
+
     .info-card {
         background: white;
         padding: 22px;
@@ -341,12 +356,6 @@ def home():
         padding-left: 20px;
         color: #4b5563;
         line-height: 1.9;
-    }
-
-    .grid-2 {
-        display: grid;
-        grid-template-columns: 1fr 1fr;
-        gap: 20px;
     }
 
     .privacy-box {
@@ -393,21 +402,21 @@ def home():
     <div class="hero">
         <div>
             <h1>train2ai</h1>
-            <div class="subtitle">Turn Garmin exports into AI-ready datasets</div>
+            <div class="subtitle">Turn Garmin exports into AI-ready JSON datasets</div>
 
             <div class="for-who">
-                For athletes, coaches, and quantified-self users who want to analyze training data with AI.
+                For athletes, coaches, and quantified-self users who want to analyze Garmin data with ChatGPT, Claude, Gemini, and other AI tools.
             </div>
 
             <p class="lead">
-                Upload your Garmin export ZIP and get clean JSON for ChatGPT, Claude, or Gemini.
+                Upload your Garmin account export ZIP and get clean JSON for AI analysis.
                 train2ai prepares structured datasets for AI tools. It does not perform AI analysis or coaching inside the app.
             </p>
 
             <div class="chips">
                 <div class="chip">Daily summary</div>
                 <div class="chip">Sleep</div>
-                <div class="chip">Workouts</div>
+                <div class="chip">Workout summaries</div>
                 <div class="chip">Free: 7 days</div>
                 <div class="chip">3 exports total</div>
                 <div class="chip">Garmin supported</div>
@@ -417,7 +426,7 @@ def home():
             <div class="code-box">
 <pre>{
   "source": "garmin",
-  "schema_version": "1.1",
+  "schema_version": "1.2",
   "plan": "free",
   "date_range": {
     "start": "2026-01-01",
@@ -428,6 +437,15 @@ def home():
     "sleep",
     "workouts"
   ],
+  "field_notes": {
+    "daily_summary.distance_km": "Distance in kilometers.",
+    "workouts.distance_km": "Distance in kilometers, normalized from Garmin summarized activity export.",
+    "limitations": [
+      "No second-by-second workout time series.",
+      "No GPS track in output JSON.",
+      "No in-app AI coaching."
+    ]
+  },
   "daily_summary": [
     {
       "date": "2026-01-01",
@@ -541,6 +559,8 @@ def home():
                 <button type="submit">Generate dataset</button>
             </form>
 
+            <a class="secondary-link" href="/sample" download>Download sample JSON</a>
+
             <div id="message" class="message"></div>
 
             <div class="small-note">
@@ -566,7 +586,7 @@ def home():
             <div class="step">
                 <div class="step-num">Step 1</div>
                 <h3>Export from Garmin Connect</h3>
-                <p>Request and download your Garmin data export as a ZIP file.</p>
+                <p>Request and download your Garmin account export as a ZIP file.</p>
             </div>
 
             <div class="step">
@@ -586,14 +606,14 @@ def home():
     <div class="section">
         <h2>How to export your Garmin data</h2>
         <p class="section-lead">
-            train2ai works with the official Garmin Connect export.
+            train2ai works with the official Garmin account export.
         </p>
 
         <div class="steps">
             <div class="step">
                 <div class="step-num">1</div>
                 <h3>Open Garmin Connect</h3>
-                <p>Go to Garmin Connect and open your account settings.</p>
+                <p>Go to Garmin Connect and open account settings.</p>
             </div>
 
             <div class="step">
@@ -683,70 +703,36 @@ def home():
     </div>
 
     <div class="section">
-        <h2>Output schema (AI-friendly)</h2>
-        <div class="code-box">
-<pre>{
-  "source": "garmin",
-  "schema_version": "1.1",
-  "plan": "free",
-  "date_range": {
-    "start": "2026-01-01",
-    "end": "2026-01-06"
-  },
-  "included_data": [
-    "daily_summary",
-    "sleep",
-    "workouts"
-  ],
-  "field_notes": {
-    "daily_summary.distance_km": "Distance in kilometers.",
-    "workouts.distance_km": "Distance in kilometers, normalized from Garmin summarized activity export."
-  },
-  "daily_summary": [
-    {
-      "date": "2026-01-01",
-      "steps": 8120,
-      "total_calories": 2410.0,
-      "active_calories": 534.0,
-      "distance_km": 6.3,
-      "resting_hr": 41
-    }
-  ],
-  "sleep": [
-    {
-      "date": "2026-01-01",
-      "sleep_start": "2025-12-31T14:12:00",
-      "sleep_end": "2026-01-01T00:48:00",
-      "deep_sleep_min": 72,
-      "light_sleep_min": 248,
-      "rem_sleep_min": 88
-    }
-  ],
-  "workouts": [
-    {
-      "date": "2026-01-04",
-      "sport": "CYCLING",
-      "distance_km": 40.01,
-      "duration_min": 205.3,
-      "avg_hr": 128.0,
-      "max_hr": 168.0
-    }
-  ],
-  "record_counts": {
-    "daily_summary": 6,
-    "sleep": 6,
-    "workouts": 4
-  }
-}</pre>
+        <h2>Example prompts</h2>
+        <div class="grid-2">
+            <div class="info-card">
+                <h3>Ask your AI</h3>
+                <ul>
+                    <li>Summarize my training load this week.</li>
+                    <li>Compare sleep and workout days.</li>
+                    <li>Find patterns between resting heart rate and activity.</li>
+                    <li>Create a weekly training recap from this dataset.</li>
+                </ul>
+            </div>
+
+            <div class="info-card">
+                <h3>Good to know</h3>
+                <ul>
+                    <li>train2ai prepares data for AI.</li>
+                    <li>It does not generate coaching inside the app.</li>
+                    <li>The output is summary-focused, not raw sensor streams.</li>
+                    <li>You can upload the JSON to ChatGPT, Claude, or Gemini.</li>
+                </ul>
+            </div>
         </div>
     </div>
 
     <div class="section">
         <h2>Privacy</h2>
         <div class="privacy-box">
-            Uploaded files are processed temporarily to generate the dataset.
+            Uploaded files are processed temporarily to generate the dataset and are not intended to be stored after conversion.
+            Only the selected date range and selected data types are included in the output JSON.
             train2ai is a data-preparation tool, not a coaching platform.
-            The service prepares your Garmin data for AI use and does not perform in-app analysis.
         </div>
     </div>
 
@@ -944,7 +930,7 @@ form.addEventListener("submit", async (e) => {
 
         message.textContent = "Dataset downloaded.";
         message.style.color = "#16a34a";
-    } catch (error) {
+    } catch (_) {
         trackEvent("Upload Failure", {
             plan: plan,
             error: "network_error"
@@ -969,7 +955,75 @@ def health():
     return {"status": "ok"}
 
 
-def parse_input_date(date_str: str, field: str):
+@app.get("/sample")
+def sample():
+    result = build_sample_dataset()
+    json_str = json.dumps(result, indent=2, ensure_ascii=False)
+    return Response(
+        content=json_str,
+        media_type="application/json",
+        headers={"Content-Disposition": "attachment; filename=train2ai_sample.json"}
+    )
+
+
+def build_sample_dataset():
+    return {
+        "source": "garmin",
+        "schema_version": "1.2",
+        "plan": "free",
+        "date_range": {
+            "start": "2026-01-01",
+            "end": "2026-01-06"
+        },
+        "included_data": ["daily_summary", "sleep", "workouts"],
+        "field_notes": {
+            "daily_summary.distance_km": "Distance in kilometers.",
+            "workouts.distance_km": "Distance in kilometers, normalized from Garmin summarized activity export.",
+            "limitations": [
+                "No second-by-second workout time series.",
+                "No GPS track in output JSON.",
+                "No in-app AI coaching."
+            ]
+        },
+        "daily_summary": [
+            {
+                "date": "2026-01-01",
+                "steps": 8120,
+                "total_calories": 2410.0,
+                "active_calories": 534.0,
+                "distance_km": 6.3,
+                "resting_hr": 41
+            }
+        ],
+        "sleep": [
+            {
+                "date": "2026-01-01",
+                "sleep_start": "2025-12-31T14:12:00",
+                "sleep_end": "2026-01-01T00:48:00",
+                "deep_sleep_min": 72,
+                "light_sleep_min": 248,
+                "rem_sleep_min": 88
+            }
+        ],
+        "workouts": [
+            {
+                "date": "2026-01-04",
+                "sport": "CYCLING",
+                "distance_km": 40.01,
+                "duration_min": 205.3,
+                "avg_hr": 128.0,
+                "max_hr": 168.0
+            }
+        ],
+        "record_counts": {
+            "daily_summary": 1,
+            "sleep": 1,
+            "workouts": 1
+        }
+    }
+
+
+def parse_input_date(date_str: str, field: str) -> date:
     try:
         return datetime.strptime(date_str, "%Y-%m-%d").date()
     except Exception:
@@ -1108,6 +1162,44 @@ async def precheck(
     }
 
 
+def is_daily_summary_file(filename: str) -> bool:
+    lower = filename.lower()
+    return lower.startswith("udsfile_") and lower.endswith(".json")
+
+
+def is_sleep_file(filename: str) -> bool:
+    lower = filename.lower()
+    return lower.endswith("_sleepdata.json")
+
+
+def is_workout_file(filename: str) -> bool:
+    lower = filename.lower()
+    return "summarizedactivities" in lower and lower.endswith(".json")
+
+
+def scan_garmin_files(root_dir: str):
+    uds_files = []
+    sleep_files = []
+    workout_files = []
+
+    for root, _, files in os.walk(root_dir):
+        for name in files:
+            path = os.path.join(root, name)
+
+            if is_daily_summary_file(name):
+                uds_files.append(path)
+            elif is_sleep_file(name):
+                sleep_files.append(path)
+            elif is_workout_file(name):
+                workout_files.append(path)
+
+    return {
+        "daily_summary": sorted(uds_files),
+        "sleep": sorted(sleep_files),
+        "workouts": sorted(workout_files),
+    }
+
+
 def collect_daily_summary(uds_files, start, end):
     daily_summary = []
 
@@ -1122,19 +1214,22 @@ def collect_daily_summary(uds_files, start, end):
             continue
 
         for item in data:
-            date = item.get("calendarDate")
-            if not date:
+            if not isinstance(item, dict):
+                continue
+
+            date_str = item.get("calendarDate")
+            if not date_str:
                 continue
 
             try:
-                d = datetime.strptime(date, "%Y-%m-%d").date()
+                d = datetime.strptime(date_str, "%Y-%m-%d").date()
             except ValueError:
                 continue
 
             if start <= d <= end:
                 dist = item.get("totalDistanceMeters")
                 daily_summary.append({
-                    "date": date,
+                    "date": date_str,
                     "steps": item.get("totalSteps"),
                     "total_calories": item.get("totalKilocalories"),
                     "active_calories": item.get("activeKilocalories"),
@@ -1159,18 +1254,21 @@ def collect_sleep(sleep_files, start, end):
             continue
 
         for item in data:
-            date = item.get("calendarDate")
-            if not date:
+            if not isinstance(item, dict):
+                continue
+
+            date_str = item.get("calendarDate")
+            if not date_str:
                 continue
 
             try:
-                d = datetime.strptime(date, "%Y-%m-%d").date()
+                d = datetime.strptime(date_str, "%Y-%m-%d").date()
             except ValueError:
                 continue
 
             if start <= d <= end:
                 sleep.append({
-                    "date": date,
+                    "date": date_str,
                     "sleep_start": parse_garmin_datetime(item.get("sleepStartTimestampGMT")),
                     "sleep_end": parse_garmin_datetime(item.get("sleepEndTimestampGMT")),
                     "deep_sleep_min": round((item.get("deepSleepSeconds") or 0) / 60),
@@ -1179,6 +1277,22 @@ def collect_sleep(sleep_files, start, end):
                 })
 
     return sorted(sleep, key=lambda x: x["date"])
+
+
+def extract_workout_activity_list(data):
+    if isinstance(data, list):
+        if len(data) > 0 and isinstance(data[0], dict) and "summarizedActivitiesExport" in data[0]:
+            nested = data[0].get("summarizedActivitiesExport")
+            if isinstance(nested, list):
+                return nested
+        return data
+
+    if isinstance(data, dict):
+        nested = data.get("summarizedActivitiesExport")
+        if isinstance(nested, list):
+            return nested
+
+    return []
 
 
 def collect_workouts(workout_files, start, end):
@@ -1191,28 +1305,24 @@ def collect_workouts(workout_files, start, end):
         except Exception:
             continue
 
-        if isinstance(data, list):
-            if len(data) > 0 and isinstance(data[0], dict) and "summarizedActivitiesExport" in data[0]:
-                activities = data[0]["summarizedActivitiesExport"]
-            else:
-                activities = data
-        else:
-            activities = []
+        activities = extract_workout_activity_list(data)
 
         for act in activities:
-            start_time = act.get("startTimeLocal")
+            if not isinstance(act, dict):
+                continue
 
+            start_time = act.get("startTimeLocal")
             if not isinstance(start_time, (int, float)):
                 continue
 
-            date = datetime.fromtimestamp(start_time / 1000, tz=timezone.utc).date()
+            activity_date = datetime.fromtimestamp(start_time / 1000, tz=timezone.utc).date()
 
-            if start <= date <= end:
+            if start <= activity_date <= end:
                 dist = act.get("distance")
                 dur = act.get("duration")
 
                 workouts.append({
-                    "date": date.isoformat(),
+                    "date": activity_date.isoformat(),
                     "sport": act.get("sportType"),
                     "distance_km": round(dist / 100000, 2) if dist is not None else None,
                     "duration_min": round(dur / 60000, 1) if dur is not None else None,
@@ -1221,6 +1331,82 @@ def collect_workouts(workout_files, start, end):
                 })
 
     return sorted(workouts, key=lambda x: x["date"])
+
+
+def validate_detected_files(found_files, selected):
+    total_found = sum(len(v) for v in found_files.values())
+
+    if total_found == 0:
+        raise HTTPException(
+            status_code=400,
+            detail="No supported Garmin data files were found in this ZIP. Please upload the official Garmin account export ZIP."
+        )
+
+    missing_sources = []
+    for data_type in selected:
+        if len(found_files.get(data_type, [])) == 0:
+            missing_sources.append(data_type)
+
+    if missing_sources:
+        names = ", ".join(missing_sources)
+        raise HTTPException(
+            status_code=400,
+            detail=f"The uploaded ZIP does not contain the selected data type(s): {names}."
+        )
+
+
+def validate_collected_results(result_map, selected, start_date_str, end_date_str):
+    empty_selected = [name for name in selected if len(result_map.get(name, [])) == 0]
+
+    if len(empty_selected) == len(selected):
+        names = ", ".join(selected)
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"No records were found for the selected date range ({start_date_str} to {end_date_str}) "
+                f"for: {names}."
+            )
+        )
+
+    if empty_selected:
+        names = ", ".join(empty_selected)
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"The ZIP was valid, but no records were found in the selected date range "
+                f"({start_date_str} to {end_date_str}) for: {names}."
+            )
+        )
+
+
+def build_output(plan, start_date, end_date, selected, daily_summary, sleep, workouts):
+    return {
+        "source": "garmin",
+        "schema_version": "1.2",
+        "plan": plan,
+        "date_range": {
+            "start": start_date,
+            "end": end_date
+        },
+        "included_data": selected,
+        "field_notes": {
+            "daily_summary.distance_km": "Distance in kilometers.",
+            "workouts.distance_km": "Distance in kilometers, normalized from Garmin summarized activity export.",
+            "limitations": [
+                "No second-by-second workout time series.",
+                "No GPS track in output JSON.",
+                "No in-app AI coaching."
+            ]
+        },
+        "daily_summary": daily_summary if "daily_summary" in selected else [],
+        "sleep": sleep if "sleep" in selected else [],
+        "workouts": workouts if "workouts" in selected else [],
+        "record_counts": {
+            "daily_summary": len(daily_summary) if "daily_summary" in selected else 0,
+            "sleep": len(sleep) if "sleep" in selected else 0,
+            "workouts": len(workouts) if "workouts" in selected else 0
+        }
+    }
 
 
 @app.post("/upload")
@@ -1259,51 +1445,36 @@ async def upload(
             with open(zip_path, "wb") as f:
                 f.write(await file.read())
 
-            with zipfile.ZipFile(zip_path) as zip_ref:
-                zip_ref.extractall(temp)
+            try:
+                with zipfile.ZipFile(zip_path) as zip_ref:
+                    zip_ref.extractall(temp)
+            except zipfile.BadZipFile:
+                raise HTTPException(status_code=400, detail="Invalid ZIP file.")
 
-            uds_files = []
-            sleep_files = []
-            workout_files = []
+            found_files = scan_garmin_files(temp)
+            validate_detected_files(found_files, selected)
 
-            for root, _, files in os.walk(temp):
-                for name in files:
-                    lower = name.lower()
-                    path = os.path.join(root, name)
+            daily_summary = collect_daily_summary(found_files["daily_summary"], start, end) if "daily_summary" in selected else []
+            sleep = collect_sleep(found_files["sleep"], start, end) if "sleep" in selected else []
+            workouts = collect_workouts(found_files["workouts"], start, end) if "workouts" in selected else []
 
-                    if lower.startswith("udsfile_") and lower.endswith(".json"):
-                        uds_files.append(path)
-                    elif lower.endswith("_sleepdata.json"):
-                        sleep_files.append(path)
-                    elif "summarizedactivities" in lower and lower.endswith(".json"):
-                        workout_files.append(path)
-
-            daily_summary = collect_daily_summary(uds_files, start, end) if "daily_summary" in selected else []
-            sleep = collect_sleep(sleep_files, start, end) if "sleep" in selected else []
-            workouts = collect_workouts(workout_files, start, end) if "workouts" in selected else []
-
-            result = {
-                "source": "garmin",
-                "schema_version": "1.1",
-                "plan": plan,
-                "date_range": {
-                    "start": start_date,
-                    "end": end_date
-                },
-                "included_data": selected,
-                "field_notes": {
-                    "daily_summary.distance_km": "Distance in kilometers.",
-                    "workouts.distance_km": "Distance in kilometers, normalized from Garmin summarized activity export."
-                },
-                "daily_summary": daily_summary if "daily_summary" in selected else [],
-                "sleep": sleep if "sleep" in selected else [],
-                "workouts": workouts if "workouts" in selected else [],
-                "record_counts": {
-                    "daily_summary": len(daily_summary) if "daily_summary" in selected else 0,
-                    "sleep": len(sleep) if "sleep" in selected else 0,
-                    "workouts": len(workouts) if "workouts" in selected else 0
-                }
+            collected = {
+                "daily_summary": daily_summary,
+                "sleep": sleep,
+                "workouts": workouts,
             }
+
+            validate_collected_results(collected, selected, start_date, end_date)
+
+            result = build_output(
+                plan=plan,
+                start_date=start_date,
+                end_date=end_date,
+                selected=selected,
+                daily_summary=daily_summary,
+                sleep=sleep,
+                workouts=workouts
+            )
 
             json_str = json.dumps(result, indent=2, ensure_ascii=False)
 
@@ -1317,7 +1488,5 @@ async def upload(
 
     except HTTPException:
         raise
-    except zipfile.BadZipFile:
-        raise HTTPException(status_code=400, detail="Invalid ZIP file.")
     except Exception:
         raise HTTPException(status_code=500, detail="Internal server error.")
