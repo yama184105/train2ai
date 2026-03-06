@@ -698,6 +698,10 @@ def home():
     "sleep",
     "workouts"
   ],
+  "field_notes": {
+    "daily_summary.distance_km": "Distance in kilometers.",
+    "workouts.distance_km": "Distance in kilometers, normalized from Garmin summarized activity export."
+  },
   "daily_summary": [
     {
       "date": "2026-01-01",
@@ -1287,6 +1291,10 @@ async def upload(
                     "end": end_date
                 },
                 "included_data": selected,
+                "field_notes": {
+                    "daily_summary.distance_km": "Distance in kilometers.",
+                    "workouts.distance_km": "Distance in kilometers, normalized from Garmin summarized activity export."
+                },
                 "daily_summary": daily_summary if "daily_summary" in selected else [],
                 "sleep": sleep if "sleep" in selected else [],
                 "workouts": workouts if "workouts" in selected else [],
