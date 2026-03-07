@@ -1,48 +1,39 @@
+from __future__ import annotations
+
 import csv
 import gzip
 import math
 import os
 import tempfile
 from datetime import datetime
-from pathlib import Path
-from statistics import mean
+from typing import Any
 
-from fastapi import HTTPException
-
-from app.config import TARGET_STREAM_POINTS
-
-try:
-    from fitparse import FitFile
-except Exception:  # pragma: no cover - runtime dependency
-    FitFile = None
+from fitparse import FitFile
 
 
-RUN_SPORTS = {"run", "running", "trail run", "virtual run", "treadmill"}
-RIDE_SPORTS = {"ride", "cycling", "bike", "ebikeride", "virtualride", "mountain bike ride", "gravel ride"}
+SPORT_MAP_SUMMARY = {
+    "run": {"run", "running", "trail run", "virtual run", "treadmill"},
+    "ride": {"ride", "cycling", "virtual ride", "ebikeride", "mountain bike ride", "gravel ride"},
+}
+
+SPORT_MAP_ANALYSIS = {
+    "run": {"running"},
+    "ride": {"cycling"},
+}
 
 
-def normalize_sport_name(raw: str | None) -> str | None:
-    if not raw:
-        return None
-    value = str(raw).strip().lower()
-    if value in RUN_SPORTS or "run" in value:
-        return "run"
-    if value in RIDE_SPORTS or "ride" in value or "cycl" in value or "bike" in value:
-        return "ride"
-    return None
-
-
-def scan_strava_files(root_dir: str) -> dict[str, list[str] | str | None]:
-    activities_csv: str | None = None
+def scan_strava_files(root_dir: str) -> dict[str, Any]:
+    activities_csv = None
     fit_files: list[str] = []
 
     for root, _, files in os.walk(root_dir):
         for name in files:
-            path = os.path.join(root, name)
             lower = name.lower()
+            path = os.path.join(root, name)
+
             if lower == "activities.csv":
                 activities_csv = path
-            elif lower.endswith(".fit") or lower.endswith(".fit.gz"):
+            elif lower.endswith(".fit.gz"):
                 fit_files.append(path)
 
     return {
@@ -51,307 +42,381 @@ def scan_strava_files(root_dir: str) -> dict[str, list[str] | str | None]:
     }
 
 
-def parse_strava_datetime(value: str) -> datetime:
-    for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%dT%H:%M:%SZ", "%Y-%m-%dT%H:%M:%S"):
-        try:
-            return datetime.strptime(value, fmt)
-        except ValueError:
-            continue
-    raise ValueError(f"Unsupported datetime format: {value}")
-
-
-def to_float(value) -> float | None:
-    if value in (None, ""):
+def _safe_float(value: Any) -> float | None:
+    if value is None:
+        return None
+    text = str(value).strip()
+    if text == "":
         return None
     try:
-        return float(value)
+        return float(text)
     except Exception:
         return None
 
 
-def to_int(value) -> int | None:
-    number = to_float(value)
-    if number is None:
+def _safe_int(value: Any) -> int | None:
+    f = _safe_float(value)
+    if f is None:
         return None
-    return int(round(number))
+    return int(round(f))
 
 
-def collect_strava_summary(csv_path: str, sport: str, recent_count: int | None = None) -> list[dict]:
-    workouts: list[dict] = []
+def _parse_strava_csv_date(value: str) -> datetime.date | None:
+    if not value:
+        return None
+
+    candidates = [
+        "%Y-%m-%d %H:%M:%S",
+        "%Y-%m-%d",
+        "%b %d, %Y, %I:%M:%S %p",
+        "%b %d, %Y",
+    ]
+
+    text = value.strip()
+    for fmt in candidates:
+        try:
+            return datetime.strptime(text, fmt).date()
+        except Exception:
+            pass
+
     try:
-        with open(csv_path, "r", encoding="utf-8-sig", newline="") as f:
-            reader = csv.DictReader(f)
-            for row in reader:
-                normalized_sport = normalize_sport_name(row.get("Activity Type"))
-                if normalized_sport != sport:
-                    continue
-
-                date_raw = row.get("Activity Date")
-                if not date_raw:
-                    continue
-
-                try:
-                    activity_dt = parse_strava_datetime(date_raw)
-                except ValueError:
-                    continue
-
-                distance_m = to_float(row.get("Distance"))
-                moving_time_sec = to_float(row.get("Moving Time"))
-
-                workouts.append(
-                    {
-                        "activity_id": str(row.get("Activity ID") or "").strip() or None,
-                        "date": activity_dt.date().isoformat(),
-                        "start_time": activity_dt.isoformat(),
-                        "title": row.get("Activity Name") or None,
-                        "sport": normalized_sport,
-                        "distance_km": round(distance_m / 1000, 2) if distance_m is not None else None,
-                        "duration_min": round(moving_time_sec / 60, 1) if moving_time_sec is not None else None,
-                        "avg_hr": to_int(row.get("Average Heart Rate")),
-                        "max_hr": to_int(row.get("Max Heart Rate")),
-                        "calories": to_int(row.get("Calories")),
-                        "elevation_gain_m": to_float(row.get("Elevation Gain")),
-                    }
-                )
-    except FileNotFoundError as exc:
-        raise HTTPException(status_code=400, detail="activities.csv was not found in the Strava export ZIP.") from exc
-
-    workouts.sort(key=lambda x: x.get("start_time") or "", reverse=True)
-    if recent_count:
-        workouts = workouts[:recent_count]
-    return workouts
+        return datetime.fromisoformat(text.replace("Z", "+00:00")).date()
+    except Exception:
+        return None
 
 
-def open_fit_file(path: str):
-    if path.lower().endswith(".fit.gz"):
-        tmp = tempfile.NamedTemporaryFile(suffix=".fit", delete=False)
-        with gzip.open(path, "rb") as gz:
-            tmp.write(gz.read())
-        tmp.close()
-        return tmp.name, True
-    return path, False
+def _normalize_summary_sport(activity_type: str | None) -> str | None:
+    if not activity_type:
+        return None
+    text = activity_type.strip().lower()
+    for target, names in SPORT_MAP_SUMMARY.items():
+        if text in names:
+            return target
+    return None
 
 
-def fit_message_to_dict(message) -> dict:
-    return {field.name: field.value for field in message}
+def collect_strava_summary(
+    csv_path: str,
+    sport: str,
+    start_date: str,
+    end_date: str,
+) -> list[dict[str, Any]]:
+    start = datetime.strptime(start_date, "%Y-%m-%d").date()
+    end = datetime.strptime(end_date, "%Y-%m-%d").date()
 
+    workouts: list[dict[str, Any]] = []
 
-def extract_fit_summary(path: str) -> dict | None:
-    if FitFile is None:
-        raise HTTPException(
-            status_code=500,
-            detail="FIT analysis requires the fitparse package. Add fitparse to requirements.txt before deploying analysis mode.",
-        )
+    with open(csv_path, "r", encoding="utf-8-sig", newline="") as f:
+        reader = csv.DictReader(f)
 
-    temp_path, should_delete = open_fit_file(path)
-    try:
-        fit = FitFile(temp_path)
-        for msg in fit.get_messages("session"):
-            data = fit_message_to_dict(msg)
-            sport = normalize_sport_name(data.get("sport") or data.get("sub_sport"))
-            start_time = data.get("start_time")
-            if not start_time:
+        for row in reader:
+            activity_date = _parse_strava_csv_date(row.get("Activity Date", ""))
+            if activity_date is None:
                 continue
-            return {
-                "path": path,
-                "activity_id": Path(path).name.split(".")[0],
-                "sport": sport,
-                "start_time": start_time,
-                "date": start_time.date().isoformat() if hasattr(start_time, "date") else None,
-                "distance_km": round(float(data.get("total_distance")) / 1000, 2) if data.get("total_distance") is not None else None,
-                "duration_min": round(float(data.get("total_timer_time")) / 60, 1) if data.get("total_timer_time") is not None else None,
-                "avg_hr": to_int(data.get("avg_heart_rate")),
-                "max_hr": to_int(data.get("max_heart_rate")),
-                "calories": to_int(data.get("total_calories")),
-                "elevation_gain_m": to_float(data.get("total_ascent")),
-            }
-        return None
-    finally:
-        if should_delete:
-            Path(temp_path).unlink(missing_ok=True)
-
-
-def list_recent_analysis_candidates(fit_files: list[str], sport: str, recent_count: int) -> list[dict]:
-    candidates: list[dict] = []
-    for fit_path in fit_files:
-        summary = extract_fit_summary(fit_path)
-        if not summary:
-            continue
-        if summary.get("sport") != sport:
-            continue
-        candidates.append(summary)
-
-    candidates.sort(key=lambda x: x.get("start_time") or datetime.min, reverse=True)
-    return candidates[:recent_count]
-
-
-def avg_or_none(values: list[float | int | None]) -> float | None:
-    cleaned = [float(v) for v in values if v is not None]
-    if not cleaned:
-        return None
-    return mean(cleaned)
-
-
-def compress_records(records: list[dict], target_points: int = TARGET_STREAM_POINTS) -> dict:
-    if not records:
-        return {}
-
-    total_points = len(records)
-    actual_points = min(target_points, total_points)
-    compressed = {
-        "elapsed_sec": [],
-        "heart_rate": [],
-        "speed_mps": [],
-        "cadence": [],
-    }
-
-    has_power = any(r.get("power") is not None for r in records)
-    has_altitude = any(r.get("altitude") is not None for r in records)
-    if has_power:
-        compressed["power"] = []
-    if has_altitude:
-        compressed["altitude_m"] = []
-
-    for i in range(actual_points):
-        start_idx = math.floor(i * total_points / actual_points)
-        end_idx = math.floor((i + 1) * total_points / actual_points)
-        chunk = records[start_idx:max(end_idx, start_idx + 1)]
-        center = chunk[len(chunk) // 2]
-
-        hr = avg_or_none([r.get("heart_rate") for r in chunk])
-        speed = avg_or_none([r.get("speed") for r in chunk])
-        cadence = avg_or_none([r.get("cadence") for r in chunk])
-
-        compressed["elapsed_sec"].append(int(center.get("elapsed_sec") or 0))
-        compressed["heart_rate"].append(round(hr, 1) if hr is not None else None)
-        compressed["speed_mps"].append(round(speed, 3) if speed is not None else None)
-        compressed["cadence"].append(round(cadence, 1) if cadence is not None else None)
-
-        if has_power:
-            value = avg_or_none([r.get("power") for r in chunk])
-            compressed["power"].append(round(value, 1) if value is not None else None)
-        if has_altitude:
-            value = avg_or_none([r.get("altitude") for r in chunk])
-            compressed["altitude_m"].append(round(value, 1) if value is not None else None)
-
-    pace_values = []
-    for speed in compressed["speed_mps"]:
-        if speed is None or speed <= 0:
-            pace_values.append(None)
-        else:
-            pace_values.append(round(1000 / speed / 60, 2))
-    compressed["pace_min_per_km"] = pace_values
-    return compressed
-
-
-def extract_fit_records(path: str) -> list[dict]:
-    if FitFile is None:
-        raise HTTPException(
-            status_code=500,
-            detail="FIT analysis requires the fitparse package. Add fitparse to requirements.txt before deploying analysis mode.",
-        )
-
-    temp_path, should_delete = open_fit_file(path)
-    try:
-        fit = FitFile(temp_path)
-        rows: list[dict] = []
-        base_ts = None
-
-        for msg in fit.get_messages("record"):
-            data = fit_message_to_dict(msg)
-            timestamp = data.get("timestamp")
-            if timestamp is None:
+            if not (start <= activity_date <= end):
                 continue
-            if base_ts is None:
-                base_ts = timestamp
-            elapsed_sec = int((timestamp - base_ts).total_seconds()) if hasattr(timestamp, "__sub__") else None
-            rows.append(
+
+            normalized_sport = _normalize_summary_sport(row.get("Activity Type"))
+            if sport != "all" and normalized_sport != sport:
+                continue
+
+            distance_m = _safe_float(row.get("Distance"))
+            moving_time_sec = _safe_float(row.get("Moving Time"))
+            elapsed_time_sec = _safe_float(row.get("Elapsed Time"))
+            avg_hr = _safe_float(row.get("Average Heart Rate"))
+            max_hr = _safe_float(row.get("Max Heart Rate"))
+            calories = _safe_float(row.get("Calories"))
+
+            workouts.append(
                 {
-                    "timestamp": timestamp,
-                    "elapsed_sec": elapsed_sec,
-                    "heart_rate": to_float(data.get("heart_rate")),
-                    "speed": to_float(data.get("speed")),
-                    "cadence": to_float(data.get("cadence")),
-                    "power": to_float(data.get("power")),
-                    "altitude": to_float(data.get("altitude")),
+                    "date": activity_date.isoformat(),
+                    "title": row.get("Activity Name"),
+                    "sport": normalized_sport or row.get("Activity Type"),
+                    "distance_km": round(distance_m / 1000, 2) if distance_m is not None else None,
+                    "duration_min": round(moving_time_sec / 60, 1) if moving_time_sec is not None else None,
+                    "elapsed_min": round(elapsed_time_sec / 60, 1) if elapsed_time_sec is not None else None,
+                    "avg_hr": avg_hr,
+                    "max_hr": max_hr,
+                    "calories": calories,
                 }
             )
-        return rows
-    finally:
-        if should_delete:
-            Path(temp_path).unlink(missing_ok=True)
 
-
-def build_analysis_workouts(fit_files: list[str], sport: str, recent_count: int) -> list[dict]:
-    selected = list_recent_analysis_candidates(fit_files, sport, recent_count)
-    workouts: list[dict] = []
-
-    for summary in selected:
-        records = extract_fit_records(summary["path"])
-        if not records:
-            continue
-        workouts.append(
-            {
-                "activity_id": summary.get("activity_id"),
-                "date": summary.get("date"),
-                "start_time": summary.get("start_time").isoformat() if summary.get("start_time") else None,
-                "sport": summary.get("sport"),
-                "distance_km": summary.get("distance_km"),
-                "duration_min": summary.get("duration_min"),
-                "avg_hr": summary.get("avg_hr"),
-                "max_hr": summary.get("max_hr"),
-                "calories": summary.get("calories"),
-                "elevation_gain_m": summary.get("elevation_gain_m"),
-                "compressed_streams": compress_records(records),
-            }
-        )
-
-    if not workouts:
-        raise HTTPException(status_code=400, detail="No matching FIT activities with record data were found for analysis mode.")
+    workouts.sort(key=lambda x: x["date"])
     return workouts
 
 
-def build_summary_output(plan: str, sport: str, recent_count: int, workouts: list[dict]) -> dict:
+def build_summary_output(
+    plan: str,
+    sport: str,
+    start_date: str,
+    end_date: str,
+    workouts: list[dict[str, Any]],
+) -> dict[str, Any]:
     return {
         "source": "strava",
-        "schema_version": "2.0",
+        "schema_version": "2.1",
         "plan": plan,
         "mode": "summary",
         "sport": sport,
-        "recent_count": recent_count,
-        "field_notes": {
-            "distance_km": "Distance in kilometers from activities.csv.",
-            "duration_min": "Moving time in minutes from activities.csv.",
-            "limitations": [
-                "Summary mode uses activities.csv only.",
-                "No second-by-second data in summary mode.",
-                "No GPS track in output JSON.",
-            ],
+        "date_range": {
+            "start": start_date,
+            "end": end_date,
         },
         "workouts": workouts,
-        "record_counts": {"workouts": len(workouts)},
+        "record_counts": {
+            "workouts": len(workouts),
+        },
     }
 
 
-def build_analysis_output(plan: str, sport: str, recent_count: int, workouts: list[dict]) -> dict:
-    return {
+def _extract_fit_to_temp_path(fit_gz_path: str) -> str:
+    tmp = tempfile.NamedTemporaryFile(suffix=".fit", delete=False)
+    tmp_path = tmp.name
+    tmp.close()
+
+    with gzip.open(fit_gz_path, "rb") as gz, open(tmp_path, "wb") as out:
+        out.write(gz.read())
+
+    return tmp_path
+
+
+def _read_fit_messages(fit_path: str, message_name: str) -> list[dict[str, Any]]:
+    fit = FitFile(fit_path)
+    items: list[dict[str, Any]] = []
+    for msg in fit.get_messages(message_name):
+        row = {}
+        for field in msg:
+            row[field.name] = field.value
+        items.append(row)
+    return items
+
+
+def _fit_sport_matches(fit_sport: str | None, requested_sport: str) -> bool:
+    if fit_sport is None:
+        return False
+    text = str(fit_sport).strip().lower()
+    return text in SPORT_MAP_ANALYSIS.get(requested_sport, set())
+
+
+def _mean_ignore_none(values: list[float | int | None]) -> float | None:
+    nums = [float(v) for v in values if v is not None]
+    if not nums:
+        return None
+    return round(sum(nums) / len(nums), 2)
+
+
+def _speed_to_pace(speed_mps: float | None) -> float | None:
+    if speed_mps is None or speed_mps <= 0:
+        return None
+    return round((1000 / speed_mps) / 60, 2)
+
+
+def _compress_records(records: list[dict[str, Any]], target_points: int = 200) -> dict[str, list[Any]]:
+    if not records:
+        return {
+            "elapsed_sec": [],
+            "pace_min_per_km": [],
+            "heart_rate": [],
+            "cadence": [],
+        }
+
+    n = len(records)
+    bucket_count = min(target_points, n)
+    chunk_size = n / bucket_count
+
+    elapsed_sec_list: list[int] = []
+    pace_list: list[float | None] = []
+    hr_list: list[float | None] = []
+    cadence_list: list[float | None] = []
+    power_list: list[float | None] = []
+    altitude_list: list[float | None] = []
+
+    start_ts = records[0].get("timestamp")
+
+    for i in range(bucket_count):
+        start_idx = int(math.floor(i * chunk_size))
+        end_idx = int(math.floor((i + 1) * chunk_size))
+        if end_idx <= start_idx:
+            end_idx = start_idx + 1
+        chunk = records[start_idx:end_idx]
+        if not chunk:
+            continue
+
+        current_ts = chunk[len(chunk) // 2].get("timestamp")
+        elapsed_sec = None
+        if start_ts is not None and current_ts is not None:
+            try:
+                elapsed_sec = int((current_ts - start_ts).total_seconds())
+            except Exception:
+                elapsed_sec = i
+
+        speeds = [_safe_float(r.get("speed")) for r in chunk]
+        hrs = [_safe_float(r.get("heart_rate")) for r in chunk]
+        cads = [_safe_float(r.get("cadence")) for r in chunk]
+        pows = [_safe_float(r.get("power")) for r in chunk]
+        alts = [_safe_float(r.get("altitude")) for r in chunk]
+
+        avg_speed = _mean_ignore_none(speeds)
+
+        elapsed_sec_list.append(elapsed_sec if elapsed_sec is not None else i)
+        pace_list.append(_speed_to_pace(avg_speed))
+        hr_list.append(_mean_ignore_none(hrs))
+        cadence_list.append(_mean_ignore_none(cads))
+
+        if any(v is not None for v in pows):
+            power_list.append(_mean_ignore_none(pows))
+        if any(v is not None for v in alts):
+            altitude_list.append(_mean_ignore_none(alts))
+
+    result = {
+        "elapsed_sec": elapsed_sec_list,
+        "pace_min_per_km": pace_list,
+        "heart_rate": hr_list,
+        "cadence": cadence_list,
+    }
+
+    if power_list:
+        result["power"] = power_list
+    if altitude_list:
+        result["altitude_m"] = altitude_list
+
+    return result
+
+
+def _build_analysis_workout_from_fit(fit_gz_path: str) -> dict[str, Any] | None:
+    temp_fit_path = _extract_fit_to_temp_path(fit_gz_path)
+    try:
+        sessions = _read_fit_messages(temp_fit_path, "session")
+        records = _read_fit_messages(temp_fit_path, "record")
+
+        if not sessions:
+            return None
+
+        session = sessions[0]
+        start_time = session.get("start_time")
+        sport = session.get("sport")
+
+        activity_date = None
+        if start_time is not None:
+            try:
+                activity_date = start_time.date().isoformat()
+            except Exception:
+                activity_date = None
+
+        total_distance = _safe_float(session.get("total_distance"))
+        total_timer_time = _safe_float(session.get("total_timer_time"))
+        avg_hr = _safe_float(session.get("avg_heart_rate"))
+        max_hr = _safe_float(session.get("max_heart_rate"))
+
+        return {
+            "fit_path": fit_gz_path,
+            "date": activity_date,
+            "sport_raw": str(sport).lower() if sport is not None else None,
+            "distance_km": round(total_distance / 1000, 2) if total_distance is not None else None,
+            "duration_min": round(total_timer_time / 60, 1) if total_timer_time is not None else None,
+            "avg_hr": avg_hr,
+            "max_hr": max_hr,
+            "compressed_streams": _compress_records(records, target_points=200),
+        }
+    finally:
+        try:
+            os.remove(temp_fit_path)
+        except Exception:
+            pass
+
+
+def build_analysis_workouts(
+    fit_files: list[str],
+    sport: str,
+    recent_count: int,
+) -> list[dict[str, Any]]:
+    workouts: list[dict[str, Any]] = []
+
+    for fit_path in fit_files:
+        workout = _build_analysis_workout_from_fit(fit_path)
+        if not workout:
+            continue
+        if not _fit_sport_matches(workout.get("sport_raw"), sport):
+            continue
+        workouts.append(workout)
+
+    workouts.sort(key=lambda x: x.get("date") or "", reverse=True)
+    selected = workouts[:recent_count]
+
+    cleaned = []
+    for w in selected:
+        cleaned.append(
+            {
+                "date": w["date"],
+                "sport": sport,
+                "distance_km": w["distance_km"],
+                "duration_min": w["duration_min"],
+                "avg_hr": w["avg_hr"],
+                "max_hr": w["max_hr"],
+                "compressed_streams": w["compressed_streams"],
+            }
+        )
+    return cleaned
+
+
+def build_analysis_workouts_for_date(
+    fit_files: list[str],
+    sport: str,
+    activity_date: str,
+) -> list[dict[str, Any]]:
+    workouts: list[dict[str, Any]] = []
+
+    for fit_path in fit_files:
+        workout = _build_analysis_workout_from_fit(fit_path)
+        if not workout:
+            continue
+        if not _fit_sport_matches(workout.get("sport_raw"), sport):
+            continue
+        if workout.get("date") != activity_date:
+            continue
+        workouts.append(
+            {
+                "date": workout["date"],
+                "sport": sport,
+                "distance_km": workout["distance_km"],
+                "duration_min": workout["duration_min"],
+                "avg_hr": workout["avg_hr"],
+                "max_hr": workout["max_hr"],
+                "compressed_streams": workout["compressed_streams"],
+            }
+        )
+
+    workouts.sort(key=lambda x: x.get("date") or "")
+    if not workouts:
+        raise ValueError(f"No {sport} activities found for {activity_date}.")
+    return workouts
+
+
+def build_analysis_output(
+    plan: str,
+    sport: str,
+    recent_count: int | None,
+    workouts: list[dict[str, Any]],
+    analysis_scope: str = "recent",
+    activity_date: str | None = None,
+) -> dict[str, Any]:
+    result = {
         "source": "strava",
-        "schema_version": "2.0",
+        "schema_version": "2.1",
         "plan": plan,
         "mode": "analysis",
+        "analysis_scope": analysis_scope,
         "sport": sport,
-        "recent_count": recent_count,
-        "target_stream_points": TARGET_STREAM_POINTS,
-        "field_notes": {
-            "compressed_streams": "Each activity is compressed to about 200 averaged points.",
-            "speed_mps": "Average speed per compressed chunk in meters per second.",
-            "pace_min_per_km": "Derived from compressed speed.",
-            "limitations": [
-                "Analysis mode uses FIT files only.",
-                "Missing fields remain null.",
-                "No GPS track in output JSON.",
-            ],
-        },
+        "target_stream_points": 200,
         "workouts": workouts,
-        "record_counts": {"workouts": len(workouts)},
+        "record_counts": {
+            "workouts": len(workouts),
+        },
     }
+
+    if analysis_scope == "recent":
+        result["recent_count"] = recent_count
+    if analysis_scope == "date":
+        result["activity_date"] = activity_date
+
+    return result
