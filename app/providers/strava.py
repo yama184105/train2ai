@@ -122,6 +122,30 @@ def _speed_to_pace(speed_mps: float | None) -> float | None:
     return round((1000 / speed_mps) / 60, 2)
 
 
+def _resolve_record_speeds(records: list[dict[str, Any]]) -> list[float | None]:
+    """Return speed in m/s for each record: speed → enhanced_speed → distance delta / time delta."""
+    speeds: list[float | None] = []
+    for i, r in enumerate(records):
+        s = _safe_float(r.get("speed"))
+        if s is None:
+            s = _safe_float(r.get("enhanced_speed"))
+        if s is None and i > 0:
+            prev = records[i - 1]
+            d1 = _safe_float(r.get("distance"))
+            d0 = _safe_float(prev.get("distance"))
+            t1 = r.get("timestamp")
+            t0 = prev.get("timestamp")
+            if d1 is not None and d0 is not None and t1 is not None and t0 is not None:
+                try:
+                    dt = (t1 - t0).total_seconds()
+                    if dt > 0:
+                        s = (d1 - d0) / dt
+                except Exception:
+                    pass
+        speeds.append(s if s is not None and s >= 0 else None)
+    return speeds
+
+
 def _compress_records(records: list[dict[str, Any]], target_points: int = 200) -> dict[str, list[Any]]:
     if not records:
         return {
@@ -143,6 +167,7 @@ def _compress_records(records: list[dict[str, Any]], target_points: int = 200) -
     altitude_list: list[float | None] = []
 
     start_ts = records[0].get("timestamp")
+    precomputed_speeds = _resolve_record_speeds(records)
 
     for i in range(bucket_count):
         start_idx = int(math.floor(i * chunk_size))
@@ -162,7 +187,7 @@ def _compress_records(records: list[dict[str, Any]], target_points: int = 200) -
             except Exception:
                 elapsed_sec = i
 
-        speeds = [_safe_float(r.get("speed")) for r in chunk]
+        speeds = precomputed_speeds[start_idx:end_idx]
         hrs = [_safe_float(r.get("heart_rate")) for r in chunk]
         cads = [_safe_float(r.get("cadence")) for r in chunk]
         pows = [_safe_float(r.get("power")) for r in chunk]
@@ -312,6 +337,64 @@ def collect_strava_summary(
     return workouts
 
 
+def _dataset_info() -> dict[str, Any]:
+    return {
+        "units": {
+            "distance_km": "kilometers",
+            "duration_min": "minutes",
+            "elapsed_min": "minutes",
+            "avg_hr": "beats per minute",
+            "max_hr": "beats per minute",
+            "calories": "kilocalories",
+            "pace_min_per_km": "minutes per kilometer (lower = faster)",
+            "cadence": "steps or revolutions per minute (see sport_semantics)",
+            "power": "watts",
+            "altitude_m": "meters above sea level",
+            "elapsed_sec": "seconds from activity start",
+        }
+    }
+
+
+def _null_policy() -> dict[str, Any]:
+    return {
+        "meaning": "null indicates the value was not recorded or could not be derived",
+        "pace_min_per_km": "null when speed, enhanced_speed, and distance/time deltas are all absent in the FIT data",
+        "heart_rate": "null when no HR monitor was paired during the activity",
+        "cadence": "null when no cadence sensor was paired during the activity",
+        "power": "null when no power meter was paired; key omitted entirely if no activity in the dataset has power data",
+        "altitude_m": "null when GPS altitude was unavailable; key omitted entirely if no activity has altitude data",
+    }
+
+
+def _sport_semantics(sport: str) -> dict[str, Any]:
+    if sport == "run":
+        return {
+            "sport": "run",
+            "pace_interpretation": "pace_min_per_km is the primary intensity metric; lower values indicate faster running",
+            "cadence_interpretation": "cadence is steps per minute; typical range 150-200 spm",
+            "power_interpretation": "running power in watts if a running power meter was used",
+        }
+    if sport == "ride":
+        return {
+            "sport": "ride",
+            "pace_interpretation": "pace_min_per_km is derived from cycling speed; speed in km/h = 60 / pace_min_per_km",
+            "cadence_interpretation": "cadence is pedaling revolutions per minute; typical range 70-110 rpm",
+            "power_interpretation": "cycling power in watts from a power meter; primary intensity metric when available",
+        }
+    return {"sport": sport}
+
+
+def _workout_analysis_features(compressed_streams: dict[str, Any]) -> dict[str, Any]:
+    available = [
+        key for key, values in compressed_streams.items()
+        if isinstance(values, list) and any(v is not None for v in values)
+    ]
+    return {
+        "available_streams": available,
+        "stream_point_count": len(compressed_streams.get("elapsed_sec", [])),
+    }
+
+
 def build_summary_output(
     plan: str,
     sport: str,
@@ -329,6 +412,9 @@ def build_summary_output(
             "start": start_date,
             "end": end_date,
         },
+        "dataset_info": _dataset_info(),
+        "null_policy": _null_policy(),
+        "sport_semantics": _sport_semantics(sport),
         "workouts": workouts,
         "record_counts": {
             "workouts": len(workouts),
@@ -546,6 +632,11 @@ def build_analysis_output(
     analysis_scope: str = "recent",
     activity_date: str | None = None,
 ) -> dict[str, Any]:
+    annotated_workouts = [
+        {**w, "analysis_features": _workout_analysis_features(w.get("compressed_streams", {}))}
+        for w in workouts
+    ]
+
     result = {
         "source": "strava",
         "schema_version": "2.3",
@@ -554,9 +645,12 @@ def build_analysis_output(
         "analysis_scope": analysis_scope,
         "sport": sport,
         "target_stream_points": 200,
-        "workouts": workouts,
+        "dataset_info": _dataset_info(),
+        "null_policy": _null_policy(),
+        "sport_semantics": _sport_semantics(sport),
+        "workouts": annotated_workouts,
         "record_counts": {
-            "workouts": len(workouts),
+            "workouts": len(annotated_workouts),
         },
     }
 
