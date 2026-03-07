@@ -12,31 +12,153 @@ from fastapi.responses import HTMLResponse, Response
 from app.config import (
     ALLOWED_MODES,
     ALLOWED_SOURCES,
-    ALLOWED_SPORTS,
-    FREE_MAX_DAYS,
-    FREE_TOTAL_LIMIT,
-    PRO_MAX_DAYS,
 )
 from app.providers import garmin, strava
 from app.utils.dates import parse_input_date
 from app.utils.usage import (
     check_usage_limit_only,
     get_client_ip,
-    get_usage_count,
     increment_usage,
 )
 
 app = FastAPI(title="train2ai")
 
-ANALYSIS_RECENT_CHOICES = {1, 3, 5, 10}
-STRAVA_SUMMARY_SPORTS = {"all", "run", "ride"}
-ANALYSIS_SCOPES = {"recent", "date"}
 
+# -------------------------------
+# UI
+# -------------------------------
+
+@app.get("/", response_class=HTMLResponse)
+def home():
+
+    return """
+<!DOCTYPE html>
+<html>
+<head>
+
+<meta charset="utf-8">
+<title>train2ai</title>
+
+<style>
+
+body{
+font-family: Arial;
+max-width:900px;
+margin:auto;
+padding:40px;
+}
+
+h1{
+font-size:34px;
+}
+
+label{
+display:block;
+margin-top:20px;
+}
+
+select,input{
+padding:8px;
+font-size:15px;
+margin-top:5px;
+}
+
+button{
+margin-top:30px;
+padding:14px 22px;
+font-size:18px;
+}
+
+</style>
+
+</head>
+
+<body>
+
+<h1>train2ai</h1>
+
+<p>
+Garmin summary export and Strava summary / analysis export.
+</p>
+
+<form action="/upload" method="post" enctype="multipart/form-data">
+
+<label>Source</label>
+
+<select name="source">
+<option value="garmin">Garmin</option>
+<option value="strava">Strava</option>
+</select>
+
+<label>Export ZIP</label>
+
+<input type="file" name="file" required>
+
+<label>Plan</label>
+
+<select name="plan">
+<option value="free">Free</option>
+<option value="pro">Pro</option>
+</select>
+
+<label>Mode</label>
+
+<select name="mode">
+<option value="summary">Summary</option>
+<option value="analysis">Analysis</option>
+</select>
+
+<label>Sport</label>
+
+<select name="sport">
+<option value="run">Run</option>
+<option value="ride">Ride</option>
+</select>
+
+<label>Recent workouts</label>
+
+<select name="recent_count">
+<option value="1">1</option>
+<option value="3">3</option>
+<option value="5" selected>5</option>
+<option value="10">10</option>
+</select>
+
+<label>Analysis scope</label>
+
+<select name="analysis_scope">
+<option value="recent">Recent</option>
+<option value="date">Specific date</option>
+</select>
+
+<label>Activity date</label>
+
+<input type="date" name="activity_date">
+
+<br>
+
+<button type="submit">Generate dataset</button>
+
+</form>
+
+</body>
+</html>
+"""
+
+
+# -------------------------------
+# Health check
+# -------------------------------
 
 @app.get("/health")
 def health():
+
     return {"status": "ok"}
 
+
+# -------------------------------
+# Upload endpoint
+# -------------------------------
 
 @app.post("/upload")
 async def upload(
@@ -47,7 +169,6 @@ async def upload(
     mode: str = Form("summary"),
     start_date: Optional[str] = Form(None),
     end_date: Optional[str] = Form(None),
-    included_data: Optional[list[str]] = Form(None),
     sport: str = Form("run"),
     recent_count: int = Form(5),
     analysis_scope: str = Form("recent"),
@@ -57,7 +178,7 @@ async def upload(
     ip = get_client_ip(request)
 
     if not file.filename.lower().endswith(".zip"):
-        raise HTTPException(status_code=400, detail="Upload a ZIP file.")
+        raise HTTPException(status_code=400, detail="Upload ZIP file.")
 
     if source not in ALLOWED_SOURCES:
         raise HTTPException(status_code=400, detail="Invalid source.")
@@ -79,45 +200,42 @@ async def upload(
             with zipfile.ZipFile(zip_path) as zf:
                 zf.extractall(temp_dir)
 
+            # -------------------------
+            # Garmin
+            # -------------------------
+
             if source == "garmin":
-
-                if not start_date or not end_date:
-                    raise HTTPException(status_code=400, detail="Garmin requires start_date and end_date.")
-
-                selected = garmin.normalize_included_data(included_data or [])
 
                 start = parse_input_date(start_date, "start_date")
                 end = parse_input_date(end_date, "end_date")
 
                 found = garmin.scan_garmin_files(temp_dir)
 
-                daily_summary = (
-                    garmin.collect_daily_summary(found["daily_summary"], start, end)
-                    if "daily_summary" in selected
-                    else []
+                daily_summary = garmin.collect_daily_summary(
+                    found["daily_summary"], start, end
                 )
 
-                sleep = (
-                    garmin.collect_sleep(found["sleep"], start, end)
-                    if "sleep" in selected
-                    else []
+                sleep = garmin.collect_sleep(
+                    found["sleep"], start, end
                 )
 
-                workouts = (
-                    garmin.collect_workouts(found["workouts"], start, end)
-                    if "workouts" in selected
-                    else []
+                workouts = garmin.collect_workouts(
+                    found["workouts"], start, end
                 )
 
                 result = garmin.build_output(
                     plan,
                     start_date,
                     end_date,
-                    selected,
+                    ["daily_summary", "sleep", "workouts"],
                     daily_summary,
                     sleep,
                     workouts,
                 )
+
+            # -------------------------
+            # Strava
+            # -------------------------
 
             else:
 
@@ -128,12 +246,6 @@ async def upload(
 
                 if mode == "summary":
 
-                    if not csv_path:
-                        raise HTTPException(
-                            status_code=400,
-                            detail="activities.csv not found in Strava export.",
-                        )
-
                     workouts = strava.collect_strava_summary(
                         csv_path,
                         sport=sport,
@@ -142,25 +254,16 @@ async def upload(
                     )
 
                     result = strava.build_summary_output(
-                        plan=plan,
-                        sport=sport,
-                        start_date=start_date,
-                        end_date=end_date,
-                        workouts=workouts,
+                        plan,
+                        sport,
+                        start_date,
+                        end_date,
+                        workouts,
                     )
 
                 else:
 
-                    if not fit_files:
-                        raise HTTPException(
-                            status_code=400,
-                            detail="No FIT files found in Strava export.",
-                        )
-
                     if analysis_scope == "recent":
-
-                        if recent_count not in ANALYSIS_RECENT_CHOICES:
-                            raise HTTPException(status_code=400, detail="Invalid recent_count")
 
                         workouts = strava.build_analysis_workouts(
                             fit_files,
@@ -177,12 +280,6 @@ async def upload(
                         )
 
                     else:
-
-                        if not csv_path:
-                            raise HTTPException(
-                                status_code=400,
-                                detail="activities.csv required for date analysis.",
-                            )
 
                         workouts = strava.build_analysis_workouts_for_date(
                             csv_path=csv_path,
@@ -214,4 +311,7 @@ async def upload(
         raise
 
     except Exception as exc:
-        raise HTTPException(status_code=500, detail=f"Internal server error: {exc}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Internal server error: {exc}",
+        )
