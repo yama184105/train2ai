@@ -450,7 +450,8 @@ async def upload(
                 found = strava.scan_strava_files(temp_dir)
                 csv_path = found.get("activities_csv")
                 fit_files = found.get("fit_files") or []
-                fit_file_map = found.get("fit_file_map") or {}
+                fit_file_map_by_id = found.get("fit_file_map_by_id") or {}
+                fit_file_map_by_relpath = found.get("fit_file_map_by_relpath") or {}
 
                 if mode == "summary":
                     if not csv_path:
@@ -496,7 +497,8 @@ async def upload(
 
                         workouts = strava.build_analysis_workouts(
                             csv_path=csv_path,
-                            fit_file_map=fit_file_map,
+                            fit_file_map_by_id=fit_file_map_by_id,
+                            fit_file_map_by_relpath=fit_file_map_by_relpath,
                             sport=analysis_sport,
                             recent_count=analysis_recent_count,
                         )
@@ -515,7 +517,8 @@ async def upload(
 
                         workouts = strava.build_analysis_workouts_for_date(
                             csv_path=csv_path,
-                            fit_file_map=fit_file_map,
+                            fit_file_map_by_id=fit_file_map_by_id,
+                            fit_file_map_by_relpath=fit_file_map_by_relpath,
                             sport=analysis_sport,
                             activity_date=analysis_activity_date,
                         )
