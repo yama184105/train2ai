@@ -251,7 +251,6 @@ const message = document.getElementById("message");
 
 const sourceSelect = document.getElementById("source");
 const modeSelect = document.getElementById("mode");
-const planSelect = document.getElementById("plan");
 
 const garminFields = document.getElementById("garmin-fields");
 const stravaModeWrap = document.getElementById("strava-mode-wrap");
@@ -451,6 +450,7 @@ async def upload(
                 found = strava.scan_strava_files(temp_dir)
                 csv_path = found.get("activities_csv")
                 fit_files = found.get("fit_files") or []
+                fit_file_map = found.get("fit_file_map") or {}
 
                 if mode == "summary":
                     if not csv_path:
@@ -484,6 +484,9 @@ async def upload(
                     if not fit_files:
                         raise HTTPException(status_code=400, detail="No FIT files found in Strava export.")
 
+                    if not csv_path:
+                        raise HTTPException(status_code=400, detail="activities.csv required for Strava analysis.")
+
                     if analysis_scope not in ANALYSIS_SCOPES:
                         raise HTTPException(status_code=400, detail="Invalid analysis scope.")
 
@@ -492,7 +495,8 @@ async def upload(
                             raise HTTPException(status_code=400, detail="Recent workouts must be 1, 3, 5, or 10.")
 
                         workouts = strava.build_analysis_workouts(
-                            fit_files=fit_files,
+                            csv_path=csv_path,
+                            fit_file_map=fit_file_map,
                             sport=analysis_sport,
                             recent_count=analysis_recent_count,
                         )
@@ -506,15 +510,12 @@ async def upload(
                         )
 
                     else:
-                        if not csv_path:
-                            raise HTTPException(status_code=400, detail="activities.csv required for date analysis.")
-
                         if not analysis_activity_date:
                             raise HTTPException(status_code=400, detail="Select an activity date.")
 
                         workouts = strava.build_analysis_workouts_for_date(
                             csv_path=csv_path,
-                            fit_files=fit_files,
+                            fit_file_map=fit_file_map,
                             sport=analysis_sport,
                             activity_date=analysis_activity_date,
                         )
