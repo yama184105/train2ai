@@ -28,501 +28,14 @@ from app.utils.usage import (
 
 app = FastAPI(title="train2ai")
 
-
 ANALYSIS_RECENT_CHOICES = {1, 3, 5, 10}
 STRAVA_SUMMARY_SPORTS = {"all", "run", "ride"}
 ANALYSIS_SCOPES = {"recent", "date"}
 
 
-@app.get("/", response_class=HTMLResponse)
-def home() -> str:
-    sample_json = json.dumps(build_sample_analysis_dataset(), indent=2, ensure_ascii=False)
-
-    return f"""
-<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>train2ai</title>
-<style>
-body {{
-    font-family: Arial, sans-serif;
-    max-width: 980px;
-    margin: 40px auto;
-    padding: 0 16px;
-    color: #111827;
-    background: #f9fafb;
-}}
-.card {{
-    background: #fff;
-    border: 1px solid #e5e7eb;
-    border-radius: 16px;
-    padding: 20px;
-    margin-bottom: 20px;
-}}
-label {{
-    display: block;
-    font-weight: 700;
-    margin-top: 14px;
-    margin-bottom: 6px;
-}}
-input, select, button {{
-    width: 100%;
-    padding: 12px;
-    border-radius: 10px;
-    border: 1px solid #d1d5db;
-    box-sizing: border-box;
-    font-size: 16px;
-}}
-input[type="checkbox"] {{
-    width: auto;
-    margin-right: 8px;
-}}
-button {{
-    background: #111827;
-    color: white;
-    border: none;
-    font-weight: 700;
-    margin-top: 20px;
-    cursor: pointer;
-}}
-button:disabled {{
-    opacity: 0.65;
-    cursor: not-allowed;
-}}
-pre {{
-    overflow-x: auto;
-    background: #0b1020;
-    color: #f3f4f6;
-    padding: 16px;
-    border-radius: 12px;
-}}
-.small {{
-    color: #6b7280;
-    font-size: 14px;
-    line-height: 1.6;
-}}
-.row {{
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 16px;
-}}
-.checkbox-group {{
-    display: grid;
-    gap: 8px;
-    margin-top: 8px;
-}}
-.hidden {{
-    display: none;
-}}
-@media (max-width: 700px) {{
-    .row {{
-        grid-template-columns: 1fr;
-    }}
-}}
-</style>
-</head>
-<body>
-<h1>train2ai</h1>
-<p class="small">Garmin summary export and Strava summary / analysis export in a cleaner modular codebase.</p>
-
-<div class="card">
-<form id="uploadForm">
-<label for="source">Source</label>
-<select id="source" name="source">
-  <option value="garmin" selected>Garmin</option>
-  <option value="strava">Strava</option>
-</select>
-
-<label for="file">Export ZIP</label>
-<input type="file" id="file" name="file" accept=".zip" required>
-
-<div class="row">
-  <div>
-    <label for="plan">Plan</label>
-    <select id="plan" name="plan">
-      <option value="free" selected>Free</option>
-      <option value="pro" disabled>Pro (coming soon)</option>
-    </select>
-  </div>
-
-  <div id="strava-mode-wrap" class="hidden">
-    <label for="mode">Strava output</label>
-    <select id="mode" name="mode">
-      <option value="summary" selected>Summary</option>
-      <option value="analysis">Analysis</option>
-    </select>
-  </div>
-</div>
-
-<div id="garmin-fields">
-  <div class="row">
-    <div>
-      <label for="start_date">Start date (Garmin)</label>
-      <input type="date" id="start_date" name="start_date">
-    </div>
-    <div>
-      <label for="end_date">End date (Garmin)</label>
-      <input type="date" id="end_date" name="end_date">
-    </div>
-  </div>
-
-  <label>Garmin data types</label>
-  <div class="checkbox-group">
-    <label><input type="checkbox" name="included_data" value="daily_summary" checked> daily_summary</label>
-    <label><input type="checkbox" name="included_data" value="sleep" checked> sleep</label>
-    <label><input type="checkbox" name="included_data" value="workouts" checked> workouts</label>
-  </div>
-</div>
-
-<div id="strava-fields" class="hidden">
-  <div id="strava-summary-fields">
-    <div class="row">
-      <div>
-        <label for="summary_sport">Sport (Strava summary)</label>
-        <select id="summary_sport">
-          <option value="all" selected>All</option>
-          <option value="run">Run</option>
-          <option value="ride">Ride</option>
-        </select>
-      </div>
-      <div></div>
-    </div>
-
-    <div class="row">
-      <div>
-        <label for="summary_start_date">Start date (Strava summary)</label>
-        <input type="date" id="summary_start_date">
-      </div>
-      <div>
-        <label for="summary_end_date">End date (Strava summary)</label>
-        <input type="date" id="summary_end_date">
-      </div>
-    </div>
-  </div>
-
-  <div id="strava-analysis-fields" class="hidden">
-    <div class="row">
-      <div>
-        <label for="analysis_sport">Sport (Strava analysis)</label>
-        <select id="analysis_sport">
-          <option value="run" selected>Run</option>
-          <option value="ride">Ride</option>
-        </select>
-      </div>
-      <div>
-        <label for="analysis_scope">Analysis scope</label>
-        <select id="analysis_scope">
-          <option value="recent" selected>Recent workouts</option>
-          <option value="date">Specific date</option>
-        </select>
-      </div>
-    </div>
-
-    <div id="analysis-recent-wrap" class="row">
-      <div>
-        <label for="analysis_recent_count">Recent workouts</label>
-        <select id="analysis_recent_count">
-          <option value="1">1</option>
-          <option value="3">3</option>
-          <option value="5" selected>5</option>
-          <option value="10">10</option>
-        </select>
-      </div>
-      <div></div>
-    </div>
-
-    <div id="analysis-date-wrap" class="row hidden">
-      <div>
-        <label for="analysis_activity_date">Activity date</label>
-        <input type="date" id="analysis_activity_date">
-      </div>
-      <div></div>
-    </div>
-
-    <p class="small" style="margin-top:12px;">
-      Analysis mode uses FIT files from the Strava export and compresses each activity stream to around 200 points.
-    </p>
-  </div>
-</div>
-
-<button type="submit">Generate dataset</button>
-</form>
-
-<div id="message" class="small" style="margin-top:12px;"></div>
-</div>
-
-<div class="card">
-<h2>Sample analysis payload shape</h2>
-<pre>{sample_json}</pre>
-</div>
-
-<script>
-const form = document.getElementById("uploadForm");
-const message = document.getElementById("message");
-
-const sourceSelect = document.getElementById("source");
-const modeSelect = document.getElementById("mode");
-
-const garminFields = document.getElementById("garmin-fields");
-const stravaModeWrap = document.getElementById("strava-mode-wrap");
-const stravaFields = document.getElementById("strava-fields");
-const stravaSummaryFields = document.getElementById("strava-summary-fields");
-const stravaAnalysisFields = document.getElementById("strava-analysis-fields");
-
-const startDateInput = document.getElementById("start_date");
-const endDateInput = document.getElementById("end_date");
-
-const summarySport = document.getElementById("summary_sport");
-const summaryStartDate = document.getElementById("summary_start_date");
-const summaryEndDate = document.getElementById("summary_end_date");
-
-const analysisSport = document.getElementById("analysis_sport");
-const analysisScope = document.getElementById("analysis_scope");
-const analysisRecentCount = document.getElementById("analysis_recent_count");
-const analysisActivityDate = document.getElementById("analysis_activity_date");
-
-const analysisRecentWrap = document.getElementById("analysis-recent-wrap");
-const analysisDateWrap = document.getElementById("analysis-date-wrap");
-
-function show(el) {{
-    el.classList.remove("hidden");
-}}
-
-function hide(el) {{
-    el.classList.add("hidden");
-}}
-
-function clearDynamicNames() {{
-    summarySport.name = "";
-    summaryStartDate.name = "";
-    summaryEndDate.name = "";
-
-    analysisSport.name = "";
-    analysisScope.name = "";
-    analysisRecentCount.name = "";
-    analysisActivityDate.name = "";
-}}
-
-function syncAnalysisScopeFields() {{
-    const scope = analysisScope.value;
-
-    if (scope === "recent") {{
-        show(analysisRecentWrap);
-        hide(analysisDateWrap);
-
-        analysisRecentCount.name = "recent_count";
-        analysisActivityDate.name = "";
-    }} else {{
-        hide(analysisRecentWrap);
-        show(analysisDateWrap);
-
-        analysisRecentCount.name = "";
-        analysisActivityDate.name = "activity_date";
-    }}
-}}
-
-function syncStravaFields() {{
-    clearDynamicNames();
-
-    const mode = modeSelect.value;
-
-    if (mode === "summary") {{
-        show(stravaSummaryFields);
-        hide(stravaAnalysisFields);
-
-        summarySport.name = "sport";
-        summaryStartDate.name = "start_date";
-        summaryEndDate.name = "end_date";
-    }} else {{
-        hide(stravaSummaryFields);
-        show(stravaAnalysisFields);
-
-        analysisSport.name = "sport";
-        analysisScope.name = "analysis_scope";
-        syncAnalysisScopeFields();
-    }}
-}}
-
-function toggleFields() {{
-    const source = sourceSelect.value;
-
-    if (source === "garmin") {{
-        show(garminFields);
-        hide(stravaModeWrap);
-        hide(stravaFields);
-
-        startDateInput.disabled = false;
-        endDateInput.disabled = false;
-        modeSelect.disabled = true;
-
-        clearDynamicNames();
-    }} else {{
-        hide(garminFields);
-        show(stravaModeWrap);
-        show(stravaFields);
-
-        startDateInput.disabled = true;
-        endDateInput.disabled = true;
-        modeSelect.disabled = false;
-
-        syncStravaFields();
-    }}
-}}
-
-sourceSelect.addEventListener("change", toggleFields);
-modeSelect.addEventListener("change", toggleFields);
-analysisScope.addEventListener("change", syncAnalysisScopeFields);
-
-toggleFields();
-
-form.addEventListener("submit", async (e) => {{
-    e.preventDefault();
-    message.textContent = "Processing...";
-
-    const formData = new FormData(form);
-
-    if (sourceSelect.value === "garmin") {{
-        formData.set("mode", "summary");
-    }}
-
-    try {{
-        const res = await fetch("/upload", {{
-            method: "POST",
-            body: formData
-        }});
-
-        if (!res.ok) {{
-            let text = "Request failed";
-            try {{
-                const data = await res.json();
-                text = data.detail || text;
-            }} catch (_) {{}}
-            message.textContent = text;
-            return;
-        }}
-
-        const blob = await res.blob();
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement("a");
-        a.href = url;
-        a.download = "train2ai_dataset.json";
-        document.body.appendChild(a);
-        a.click();
-        a.remove();
-        URL.revokeObjectURL(url);
-
-        message.textContent = "Dataset downloaded.";
-    }} catch (_) {{
-        message.textContent = "Network error. Please try again.";
-    }}
-}});
-</script>
-</body>
-</html>
-"""
-
-
 @app.get("/health")
-def health() -> dict:
+def health():
     return {"status": "ok"}
-
-
-@app.get("/sample")
-def sample() -> Response:
-    data = build_sample_analysis_dataset()
-    return Response(
-        content=json.dumps(data, indent=2, ensure_ascii=False),
-        media_type="application/json",
-        headers={"Content-Disposition": "attachment; filename=train2ai_sample.json"},
-    )
-
-
-def build_sample_analysis_dataset() -> dict:
-    return {
-        "source": "strava",
-        "schema_version": "2.1",
-        "plan": "free",
-        "mode": "analysis",
-        "analysis_scope": "recent",
-        "sport": "run",
-        "recent_count": 5,
-        "target_stream_points": 200,
-        "workouts": [
-            {
-                "date": "2026-03-01",
-                "sport": "run",
-                "distance_km": 10.2,
-                "duration_min": 49.8,
-                "avg_hr": 152,
-                "max_hr": 178,
-                "compressed_streams": {
-                    "elapsed_sec": [0, 300, 600, 900],
-                    "pace_min_per_km": [4.9, 5.0, 5.1, 5.3],
-                    "heart_rate": [138.0, 149.0, 156.0, 162.0],
-                    "cadence": [172.0, 173.0, 171.0, 169.0],
-                },
-            }
-        ],
-        "record_counts": {"workouts": 1},
-    }
-
-
-def validate_plan(plan: str) -> None:
-    if plan not in {"free", "pro"}:
-        raise HTTPException(status_code=400, detail="Invalid plan.")
-    if plan == "pro":
-        raise HTTPException(status_code=403, detail="Pro is coming soon. Please use Free for now.")
-
-
-def enforce_plan_limit(plan: str, start, end) -> None:
-    days = (end - start).days + 1
-    if plan == "free" and days > FREE_MAX_DAYS:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Free plan supports up to {FREE_MAX_DAYS} days per export."
-        )
-    if plan == "pro" and days > PRO_MAX_DAYS:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Pro plan supports up to {PRO_MAX_DAYS} days per export."
-        )
-
-
-@app.post("/precheck")
-async def precheck(
-    request: Request,
-    source: str = Form("garmin"),
-    mode: str = Form("summary"),
-    start_date: Optional[str] = Form(None),
-    end_date: Optional[str] = Form(None),
-    plan: str = Form("free"),
-):
-    ip = get_client_ip(request)
-    validate_plan(plan)
-
-    if source not in ALLOWED_SOURCES:
-        raise HTTPException(status_code=400, detail="Invalid source.")
-    if mode not in ALLOWED_MODES:
-        raise HTTPException(status_code=400, detail="Invalid mode.")
-
-    if source == "garmin":
-        if not start_date or not end_date:
-            raise HTTPException(status_code=400, detail="Garmin requires start_date and end_date.")
-        start = parse_input_date(start_date, "start_date")
-        end = parse_input_date(end_date, "end_date")
-        if start > end:
-            raise HTTPException(status_code=400, detail="End date must be on or after start date.")
-        enforce_plan_limit(plan, start, end)
-
-    check_usage_limit_only(ip, plan)
-    used = get_usage_count(ip, plan)
-    return {
-        "ok": True,
-        "used_exports": used,
-        "remaining_exports": max(FREE_TOTAL_LIMIT - used, 0),
-    }
 
 
 @app.post("/upload")
@@ -540,91 +53,62 @@ async def upload(
     analysis_scope: str = Form("recent"),
     activity_date: Optional[str] = Form(None),
 ):
+
     ip = get_client_ip(request)
 
-    if not file.filename or not file.filename.lower().endswith(".zip"):
+    if not file.filename.lower().endswith(".zip"):
         raise HTTPException(status_code=400, detail="Upload a ZIP file.")
+
     if source not in ALLOWED_SOURCES:
         raise HTTPException(status_code=400, detail="Invalid source.")
+
     if mode not in ALLOWED_MODES:
         raise HTTPException(status_code=400, detail="Invalid mode.")
-    validate_plan(plan)
+
     check_usage_limit_only(ip, plan)
 
-    if source == "garmin":
-        mode = "summary"
-        if not start_date or not end_date:
-            raise HTTPException(status_code=400, detail="Garmin requires start_date and end_date.")
-
-        selected = garmin.normalize_included_data(included_data or [])
-        if not selected:
-            raise HTTPException(status_code=400, detail="Please select at least one Garmin data type.")
-
-        start = parse_input_date(start_date, "start_date")
-        end = parse_input_date(end_date, "end_date")
-        if start > end:
-            raise HTTPException(status_code=400, detail="End date must be on or after start date.")
-        enforce_plan_limit(plan, start, end)
-
-    else:
-        if mode == "summary":
-            if sport not in STRAVA_SUMMARY_SPORTS:
-                raise HTTPException(status_code=400, detail="Strava summary sport must be all, run, or ride.")
-            if not start_date or not end_date:
-                raise HTTPException(status_code=400, detail="Strava summary requires start_date and end_date.")
-            start = parse_input_date(start_date, "start_date")
-            end = parse_input_date(end_date, "end_date")
-            if start > end:
-                raise HTTPException(status_code=400, detail="End date must be on or after start date.")
-
-        else:
-            if sport not in ALLOWED_SPORTS:
-                raise HTTPException(status_code=400, detail="Strava analysis sport must be run or ride.")
-            if analysis_scope not in ANALYSIS_SCOPES:
-                raise HTTPException(status_code=400, detail="analysis_scope must be recent or date.")
-            if analysis_scope == "recent":
-                if recent_count not in ANALYSIS_RECENT_CHOICES:
-                    raise HTTPException(status_code=400, detail="recent_count must be 1, 3, 5, or 10.")
-            else:
-                if not activity_date:
-                    raise HTTPException(status_code=400, detail="Specific date analysis requires activity_date.")
-                parse_input_date(activity_date, "activity_date")
-
     try:
+
         with tempfile.TemporaryDirectory() as temp_dir:
+
             zip_path = os.path.join(temp_dir, file.filename)
+
             with open(zip_path, "wb") as f:
                 f.write(await file.read())
 
-            try:
-                with zipfile.ZipFile(zip_path) as zf:
-                    zf.extractall(temp_dir)
-            except zipfile.BadZipFile as exc:
-                raise HTTPException(status_code=400, detail="Invalid ZIP file.") from exc
+            with zipfile.ZipFile(zip_path) as zf:
+                zf.extractall(temp_dir)
 
             if source == "garmin":
+
+                if not start_date or not end_date:
+                    raise HTTPException(status_code=400, detail="Garmin requires start_date and end_date.")
+
+                selected = garmin.normalize_included_data(included_data or [])
+
+                start = parse_input_date(start_date, "start_date")
+                end = parse_input_date(end_date, "end_date")
+
                 found = garmin.scan_garmin_files(temp_dir)
-                garmin.validate_detected_files(found, selected)
 
                 daily_summary = (
                     garmin.collect_daily_summary(found["daily_summary"], start, end)
-                    if "daily_summary" in selected else []
-                )
-                sleep = (
-                    garmin.collect_sleep(found["sleep"], start, end)
-                    if "sleep" in selected else []
-                )
-                workouts = (
-                    garmin.collect_workouts(found["workouts"], start, end)
-                    if "workouts" in selected else []
+                    if "daily_summary" in selected
+                    else []
                 )
 
-                collected = {
-                    "daily_summary": daily_summary,
-                    "sleep": sleep,
-                    "workouts": workouts,
-                }
-                garmin.validate_collected_results(collected, selected, start_date, end_date)
+                sleep = (
+                    garmin.collect_sleep(found["sleep"], start, end)
+                    if "sleep" in selected
+                    else []
+                )
+
+                workouts = (
+                    garmin.collect_workouts(found["workouts"], start, end)
+                    if "workouts" in selected
+                    else []
+                )
+
                 result = garmin.build_output(
                     plan,
                     start_date,
@@ -636,15 +120,18 @@ async def upload(
                 )
 
             else:
+
                 found = strava.scan_strava_files(temp_dir)
+
                 csv_path = found.get("activities_csv")
                 fit_files = found.get("fit_files") or []
 
                 if mode == "summary":
+
                     if not csv_path:
                         raise HTTPException(
                             status_code=400,
-                            detail="activities.csv was not found in the Strava export ZIP.",
+                            detail="activities.csv not found in Strava export.",
                         )
 
                     workouts = strava.collect_strava_summary(
@@ -653,11 +140,6 @@ async def upload(
                         start_date=start_date,
                         end_date=end_date,
                     )
-                    if not workouts:
-                        raise HTTPException(
-                            status_code=400,
-                            detail="No matching Strava activities were found in the selected period.",
-                        )
 
                     result = strava.build_summary_output(
                         plan=plan,
@@ -668,18 +150,24 @@ async def upload(
                     )
 
                 else:
+
                     if not fit_files:
                         raise HTTPException(
                             status_code=400,
-                            detail="No FIT files were found in the Strava export ZIP.",
+                            detail="No FIT files found in Strava export.",
                         )
 
                     if analysis_scope == "recent":
+
+                        if recent_count not in ANALYSIS_RECENT_CHOICES:
+                            raise HTTPException(status_code=400, detail="Invalid recent_count")
+
                         workouts = strava.build_analysis_workouts(
                             fit_files,
                             sport=sport,
                             recent_count=recent_count,
                         )
+
                         result = strava.build_analysis_output(
                             plan=plan,
                             sport=sport,
@@ -687,12 +175,22 @@ async def upload(
                             workouts=workouts,
                             analysis_scope="recent",
                         )
+
                     else:
+
+                        if not csv_path:
+                            raise HTTPException(
+                                status_code=400,
+                                detail="activities.csv required for date analysis.",
+                            )
+
                         workouts = strava.build_analysis_workouts_for_date(
-                            fit_files,
+                            csv_path=csv_path,
+                            fit_files=fit_files,
                             sport=sport,
                             activity_date=activity_date,
                         )
+
                         result = strava.build_analysis_output(
                             plan=plan,
                             sport=sport,
@@ -705,12 +203,15 @@ async def upload(
             increment_usage(ip, plan)
 
             return Response(
-                content=json.dumps(result, indent=2, ensure_ascii=False, default=str),
+                content=json.dumps(result, indent=2, ensure_ascii=False),
                 media_type="application/json",
-                headers={"Content-Disposition": "attachment; filename=train2ai_dataset.json"},
+                headers={
+                    "Content-Disposition": "attachment; filename=train2ai_dataset.json"
+                },
             )
 
     except HTTPException:
         raise
+
     except Exception as exc:
-        raise HTTPException(status_code=500, detail=f"Internal server error: {exc}") from exc
+        raise HTTPException(status_code=500, detail=f"Internal server error: {exc}")
