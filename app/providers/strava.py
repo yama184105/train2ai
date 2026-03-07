@@ -25,7 +25,8 @@ SPORT_MAP_ANALYSIS = {
 def scan_strava_files(root_dir: str) -> dict[str, Any]:
     activities_csv = None
     fit_files: list[str] = []
-    fit_file_map: dict[str, str] = {}
+    fit_file_map_by_id: dict[str, str] = {}
+    fit_file_map_by_relpath: dict[str, str] = {}
 
     for root, _, files in os.walk(root_dir):
         for name in files:
@@ -34,25 +35,31 @@ def scan_strava_files(root_dir: str) -> dict[str, Any]:
 
             if lower == "activities.csv":
                 activities_csv = path
+
             elif lower.endswith(".fit.gz"):
                 fit_files.append(path)
 
                 basename = os.path.basename(path)
                 activity_id = basename[:-7]  # remove ".fit.gz"
                 if activity_id:
-                    fit_file_map[activity_id] = path
+                    fit_file_map_by_id[activity_id] = path
+
+                relpath = os.path.relpath(path, root_dir).replace("\\", "/")
+                relpath = relpath.lstrip("./")
+                fit_file_map_by_relpath[relpath] = path
 
     return {
         "activities_csv": activities_csv,
         "fit_files": sorted(fit_files),
-        "fit_file_map": fit_file_map,
+        "fit_file_map_by_id": fit_file_map_by_id,
+        "fit_file_map_by_relpath": fit_file_map_by_relpath,
     }
 
 
 def _safe_float(value: Any) -> float | None:
     if value is None:
         return None
-    text = str(value).strip()
+    text = str(value).strip().replace(",", "")
     if text == "":
         return None
     try:
@@ -72,7 +79,7 @@ def _parse_strava_csv_date(value: str) -> datetime.date | None:
         "%b %d, %Y",
     ]
 
-    text = value.strip()
+    text = str(value).strip()
     for fmt in candidates:
         try:
             return datetime.strptime(text, fmt).date()
@@ -93,91 +100,6 @@ def _normalize_summary_sport(activity_type: str | None) -> str | None:
         if text in names:
             return target
     return None
-
-
-def collect_strava_summary(
-    csv_path: str,
-    sport: str,
-    start_date: str,
-    end_date: str,
-) -> list[dict[str, Any]]:
-    start = datetime.strptime(start_date, "%Y-%m-%d").date()
-    end = datetime.strptime(end_date, "%Y-%m-%d").date()
-
-    workouts: list[dict[str, Any]] = []
-
-    with open(csv_path, "r", encoding="utf-8-sig", newline="") as f:
-        reader = csv.DictReader(f)
-
-        for row in reader:
-            activity_date = _parse_strava_csv_date(row.get("Activity Date", ""))
-            if activity_date is None:
-                continue
-            if not (start <= activity_date <= end):
-                continue
-
-            normalized_sport = _normalize_summary_sport(row.get("Activity Type"))
-            if sport != "all" and normalized_sport != sport:
-                continue
-
-            distance_m = _safe_float(row.get("Distance"))
-            moving_time_sec = _safe_float(row.get("Moving Time"))
-            elapsed_time_sec = _safe_float(row.get("Elapsed Time"))
-            avg_hr = _safe_float(row.get("Average Heart Rate"))
-            max_hr = _safe_float(row.get("Max Heart Rate"))
-            calories = _safe_float(row.get("Calories"))
-
-            workouts.append(
-                {
-                    "date": activity_date.isoformat(),
-                    "title": row.get("Activity Name"),
-                    "sport": normalized_sport or row.get("Activity Type"),
-                    "distance_km": round(distance_m / 1000, 2) if distance_m is not None else None,
-                    "duration_min": round(moving_time_sec / 60, 1) if moving_time_sec is not None else None,
-                    "elapsed_min": round(elapsed_time_sec / 60, 1) if elapsed_time_sec is not None else None,
-                    "avg_hr": avg_hr,
-                    "max_hr": max_hr,
-                    "calories": calories,
-                }
-            )
-
-    workouts.sort(key=lambda x: x["date"])
-    return workouts
-
-
-def build_summary_output(
-    plan: str,
-    sport: str,
-    start_date: str,
-    end_date: str,
-    workouts: list[dict[str, Any]],
-) -> dict[str, Any]:
-    return {
-        "source": "strava",
-        "schema_version": "2.2",
-        "plan": plan,
-        "mode": "summary",
-        "sport": sport,
-        "date_range": {
-            "start": start_date,
-            "end": end_date,
-        },
-        "workouts": workouts,
-        "record_counts": {
-            "workouts": len(workouts),
-        },
-    }
-
-
-def _extract_fit_to_temp_path(fit_gz_path: str) -> str:
-    tmp = tempfile.NamedTemporaryFile(suffix=".fit", delete=False)
-    tmp_path = tmp.name
-    tmp.close()
-
-    with gzip.open(fit_gz_path, "rb") as gz, open(tmp_path, "wb") as out:
-        out.write(gz.read())
-
-    return tmp_path
 
 
 def _fit_sport_matches(fit_sport: str | None, requested_sport: str) -> bool:
@@ -273,6 +195,17 @@ def _compress_records(records: list[dict[str, Any]], target_points: int = 200) -
     return result
 
 
+def _extract_fit_to_temp_path(fit_gz_path: str) -> str:
+    tmp = tempfile.NamedTemporaryFile(suffix=".fit", delete=False)
+    tmp_path = tmp.name
+    tmp.close()
+
+    with gzip.open(fit_gz_path, "rb") as gz, open(tmp_path, "wb") as out:
+        out.write(gz.read())
+
+    return tmp_path
+
+
 def _build_analysis_workout_from_fit(fit_gz_path: str) -> dict[str, Any] | None:
     temp_fit_path = _extract_fit_to_temp_path(fit_gz_path)
 
@@ -329,19 +262,128 @@ def _build_analysis_workout_from_fit(fit_gz_path: str) -> dict[str, Any] | None:
             pass
 
 
+def collect_strava_summary(
+    csv_path: str,
+    sport: str,
+    start_date: str,
+    end_date: str,
+) -> list[dict[str, Any]]:
+    start = datetime.strptime(start_date, "%Y-%m-%d").date()
+    end = datetime.strptime(end_date, "%Y-%m-%d").date()
+
+    workouts: list[dict[str, Any]] = []
+
+    with open(csv_path, "r", encoding="utf-8-sig", newline="") as f:
+        reader = csv.DictReader(f)
+
+        for row in reader:
+            activity_date = _parse_strava_csv_date(row.get("Activity Date", ""))
+            if activity_date is None:
+                continue
+            if not (start <= activity_date <= end):
+                continue
+
+            normalized_sport = _normalize_summary_sport(row.get("Activity Type"))
+            if sport != "all" and normalized_sport != sport:
+                continue
+
+            distance_m = _safe_float(row.get("Distance"))
+            moving_time_sec = _safe_float(row.get("Moving Time"))
+            elapsed_time_sec = _safe_float(row.get("Elapsed Time"))
+            avg_hr = _safe_float(row.get("Average Heart Rate"))
+            max_hr = _safe_float(row.get("Max Heart Rate"))
+            calories = _safe_float(row.get("Calories"))
+
+            workouts.append(
+                {
+                    "date": activity_date.isoformat(),
+                    "title": row.get("Activity Name"),
+                    "sport": normalized_sport or row.get("Activity Type"),
+                    "distance_km": round(distance_m / 1000, 2) if distance_m is not None else None,
+                    "duration_min": round(moving_time_sec / 60, 1) if moving_time_sec is not None else None,
+                    "elapsed_min": round(elapsed_time_sec / 60, 1) if elapsed_time_sec is not None else None,
+                    "avg_hr": avg_hr,
+                    "max_hr": max_hr,
+                    "calories": calories,
+                }
+            )
+
+    workouts.sort(key=lambda x: x["date"])
+    return workouts
+
+
+def build_summary_output(
+    plan: str,
+    sport: str,
+    start_date: str,
+    end_date: str,
+    workouts: list[dict[str, Any]],
+) -> dict[str, Any]:
+    return {
+        "source": "strava",
+        "schema_version": "2.3",
+        "plan": plan,
+        "mode": "summary",
+        "sport": sport,
+        "date_range": {
+            "start": start_date,
+            "end": end_date,
+        },
+        "workouts": workouts,
+        "record_counts": {
+            "workouts": len(workouts),
+        },
+    }
+
+
+def _pick_first_present(row: dict[str, Any], candidates: list[str]) -> str:
+    normalized = {str(k).strip().lower(): v for k, v in row.items()}
+    for key in candidates:
+        value = normalized.get(key.strip().lower())
+        if value is not None and str(value).strip() != "":
+            return str(value).strip()
+    return ""
+
+
+def _normalize_relpath(value: str) -> str:
+    text = str(value).strip().replace("\\", "/")
+    return text.lstrip("./")
+
+
 def _read_activity_rows(csv_path: str) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
 
     with open(csv_path, "r", encoding="utf-8-sig", newline="") as f:
         reader = csv.DictReader(f)
+
         for raw in reader:
             activity_date = _parse_strava_csv_date(raw.get("Activity Date", ""))
             normalized_sport = _normalize_summary_sport(raw.get("Activity Type"))
-            activity_id = str(raw.get("Activity ID", "")).strip()
+
+            activity_id = _pick_first_present(
+                raw,
+                ["Activity ID", "activity id", "ActivityId", "id"],
+            )
+
+            # M列のファイルパスを優先して拾う
+            relative_filename = _pick_first_present(
+                raw,
+                [
+                    "Filename",
+                    "File Name",
+                    "Relative Filename",
+                    "Relative File Name",
+                    "Fit Filename",
+                    "Fit File",
+                    "File",
+                    "ファイル",
+                ],
+            )
 
             rows.append(
                 {
                     "activity_id": activity_id,
+                    "relative_filename": _normalize_relpath(relative_filename) if relative_filename else "",
                     "date": activity_date.isoformat() if activity_date else None,
                     "date_obj": activity_date,
                     "sport": normalized_sport,
@@ -352,70 +394,64 @@ def _read_activity_rows(csv_path: str) -> list[dict[str, Any]]:
     return rows
 
 
-def _load_recent_activity_ids(csv_path: str, sport: str, recent_count: int) -> list[str]:
+def _select_fit_path_for_row(
+    row: dict[str, Any],
+    fit_file_map_by_relpath: dict[str, str],
+    fit_file_map_by_id: dict[str, str],
+) -> str | None:
+    relative_filename = row.get("relative_filename") or ""
+    if relative_filename:
+        fit_path = fit_file_map_by_relpath.get(relative_filename)
+        if fit_path:
+            return fit_path
+
+        # basenameだけでも拾えるようにする
+        basename = os.path.basename(relative_filename)
+        for relpath, path in fit_file_map_by_relpath.items():
+            if os.path.basename(relpath) == basename:
+                return path
+
+    activity_id = row.get("activity_id") or ""
+    if activity_id:
+        fit_path = fit_file_map_by_id.get(activity_id)
+        if fit_path:
+            return fit_path
+
+    return None
+
+
+def _load_recent_rows(csv_path: str, sport: str, recent_count: int) -> list[dict[str, Any]]:
     rows = _read_activity_rows(csv_path)
 
     filtered = [
         row for row in rows
-        if row.get("sport") == sport and row.get("date_obj") is not None and row.get("activity_id")
+        if row.get("sport") == sport and row.get("date_obj") is not None
     ]
 
-    filtered.sort(key=lambda x: (x["date_obj"], x["activity_id"]), reverse=True)
-
-    selected = filtered[:recent_count]
-    return [row["activity_id"] for row in selected]
-
-
-def _load_activity_id_candidates(csv_path: str, sport: str, activity_date: str) -> set[str]:
-    target_date = datetime.strptime(activity_date, "%Y-%m-%d").date()
-    rows = _read_activity_rows(csv_path)
-
-    ids: set[str] = set()
-    for row in rows:
-        if row.get("date_obj") != target_date:
-            continue
-        if row.get("sport") != sport:
-            continue
-        activity_id = row.get("activity_id")
-        if activity_id:
-            ids.add(activity_id)
-
-    return ids
-
-
-def _select_fit_files_for_recent(
-    csv_path: str,
-    fit_file_map: dict[str, str],
-    sport: str,
-    recent_count: int,
-) -> list[str]:
-    recent_ids = _load_recent_activity_ids(csv_path, sport, recent_count)
-    selected: list[str] = []
-
-    for activity_id in recent_ids:
-        fit_path = fit_file_map.get(activity_id)
-        if fit_path:
-            selected.append(fit_path)
-
-    return selected
+    filtered.sort(key=lambda x: (x["date_obj"], x.get("activity_id") or "", x.get("relative_filename") or ""), reverse=True)
+    return filtered[:recent_count]
 
 
 def build_analysis_workouts(
     csv_path: str,
-    fit_file_map: dict[str, str],
+    fit_file_map_by_relpath: dict[str, str],
+    fit_file_map_by_id: dict[str, str],
     sport: str,
     recent_count: int,
 ) -> list[dict[str, Any]]:
-    target_fit_files = _select_fit_files_for_recent(
-        csv_path=csv_path,
-        fit_file_map=fit_file_map,
-        sport=sport,
-        recent_count=recent_count,
-    )
+    target_rows = _load_recent_rows(csv_path, sport, recent_count)
 
     workouts: list[dict[str, Any]] = []
 
-    for fit_path in target_fit_files:
+    for row in target_rows:
+        fit_path = _select_fit_path_for_row(
+            row=row,
+            fit_file_map_by_relpath=fit_file_map_by_relpath,
+            fit_file_map_by_id=fit_file_map_by_id,
+        )
+        if not fit_path:
+            continue
+
         workout = _build_analysis_workout_from_fit(fit_path)
         if not workout:
             continue
@@ -426,6 +462,7 @@ def build_analysis_workouts(
             {
                 "date": workout["date"],
                 "sport": sport,
+                "title": row.get("title"),
                 "distance_km": workout["distance_km"],
                 "duration_min": workout["duration_min"],
                 "avg_hr": workout["avg_hr"],
@@ -440,26 +477,35 @@ def build_analysis_workouts(
 
 def build_analysis_workouts_for_date(
     csv_path: str,
-    fit_file_map: dict[str, str],
+    fit_file_map_by_relpath: dict[str, str],
+    fit_file_map_by_id: dict[str, str],
     sport: str,
     activity_date: str,
 ) -> list[dict[str, Any]]:
-    candidate_ids = _load_activity_id_candidates(csv_path, sport, activity_date)
-    if not candidate_ids:
+    target_date = datetime.strptime(activity_date, "%Y-%m-%d").date()
+    rows = _read_activity_rows(csv_path)
+
+    candidate_rows = [
+        row for row in rows
+        if row.get("date_obj") == target_date and row.get("sport") == sport
+    ]
+
+    if not candidate_rows:
         raise ValueError(f"No {sport} activities found for {activity_date}.")
 
-    target_fit_files = []
-    for activity_id in candidate_ids:
-        fit_path = fit_file_map.get(activity_id)
-        if fit_path:
-            target_fit_files.append(fit_path)
-
-    if not target_fit_files:
-        raise ValueError(f"No FIT files matched the {sport} activities on {activity_date}.")
-
     workouts: list[dict[str, Any]] = []
+    missing_rows = 0
 
-    for fit_path in target_fit_files:
+    for row in candidate_rows:
+        fit_path = _select_fit_path_for_row(
+            row=row,
+            fit_file_map_by_relpath=fit_file_map_by_relpath,
+            fit_file_map_by_id=fit_file_map_by_id,
+        )
+        if not fit_path:
+            missing_rows += 1
+            continue
+
         workout = _build_analysis_workout_from_fit(fit_path)
         if not workout:
             continue
@@ -470,6 +516,7 @@ def build_analysis_workouts_for_date(
             {
                 "date": workout["date"],
                 "sport": sport,
+                "title": row.get("title"),
                 "distance_km": workout["distance_km"],
                 "duration_min": workout["duration_min"],
                 "avg_hr": workout["avg_hr"],
@@ -479,8 +526,15 @@ def build_analysis_workouts_for_date(
         )
 
     workouts.sort(key=lambda x: x.get("date") or "")
+
     if not workouts:
+        if missing_rows == len(candidate_rows):
+            raise ValueError(
+                f"FIT mapping failed for all {sport} activities on {activity_date}. "
+                f"Please verify the filename column in activities.csv."
+            )
         raise ValueError(f"No readable {sport} FIT activities found for {activity_date}.")
+
     return workouts
 
 
@@ -494,7 +548,7 @@ def build_analysis_output(
 ) -> dict[str, Any]:
     result = {
         "source": "strava",
-        "schema_version": "2.2",
+        "schema_version": "2.3",
         "plan": plan,
         "mode": "analysis",
         "analysis_scope": analysis_scope,
