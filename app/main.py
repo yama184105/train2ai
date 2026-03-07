@@ -11,6 +11,7 @@ from fastapi.responses import HTMLResponse, Response
 
 from app.config import ALLOWED_MODES, ALLOWED_SOURCES
 from app.providers import garmin, strava
+from app.utils.coaching import build_coaching_context, recommend_next_workout
 from app.utils.dates import parse_input_date
 from app.utils.usage import (
     check_usage_limit_only,
@@ -341,7 +342,22 @@ form.addEventListener("submit", async (e) => {
         a.remove();
         URL.revokeObjectURL(url);
 
-        message.textContent = "Dataset downloaded.";
+        message.textContent = "Dataset downloaded. Loading recommendation...";
+
+        try {
+            const rec = await fetch("/recommend").then(r => r.json());
+            message.innerText = [
+                "Dataset downloaded.",
+                "",
+                "Next workout recommendation:",
+                `  Type:     ${rec.type}`,
+                `  Duration: ${rec.duration_minutes} min`,
+                `  Pace:     ${rec.target_pace}`,
+                `  Reason:   ${rec.reason}`,
+            ].join("\n");
+        } catch (_) {
+            message.textContent = "Dataset downloaded.";
+        }
     } catch (_) {
         message.textContent = "Network error. Please try again.";
     }
@@ -356,6 +372,12 @@ form.addEventListener("submit", async (e) => {
 @app.get("/health")
 def health():
     return {"status": "ok"}
+
+
+@app.get("/recommend")
+def recommend():
+    context = build_coaching_context()
+    return recommend_next_workout(context)
 
 
 @app.post("/upload")

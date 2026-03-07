@@ -2,6 +2,9 @@ from pathlib import Path
 
 USAGE_FILE = Path("usage_log.json")
 
+PROFILE_FILE = Path("users/default/profile.json")
+COACH_NOTES_FILE = Path("users/default/coach_notes.json")
+
 FREE_TOTAL_LIMIT = 3
 FREE_MAX_DAYS = 7
 PRO_MAX_DAYS = 365
