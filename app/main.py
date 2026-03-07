@@ -31,6 +31,8 @@ app = FastAPI(title="train2ai")
 
 @app.get("/", response_class=HTMLResponse)
 def home() -> str:
+    sample_json = json.dumps(build_sample_analysis_dataset(), indent=2)
+
     return f"""
 <!DOCTYPE html>
 <html lang="en">
@@ -39,25 +41,91 @@ def home() -> str:
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>train2ai</title>
 <style>
-body {{ font-family: Arial, sans-serif; max-width: 920px; margin: 40px auto; padding: 0 16px; color: #111827; }}
-.card {{ background: #fff; border: 1px solid #e5e7eb; border-radius: 16px; padding: 20px; margin-bottom: 20px; }}
-label {{ display: block; font-weight: 700; margin-top: 14px; margin-bottom: 6px; }}
-input, select, button {{ width: 100%; padding: 12px; border-radius: 10px; border: 1px solid #d1d5db; }}
-button {{ background: #111827; color: white; border: none; font-weight: 700; margin-top: 20px; cursor: pointer; }}
-pre {{ overflow-x: auto; background: #0b1020; color: #f3f4f6; padding: 16px; border-radius: 12px; }}
-.small {{ color: #6b7280; font-size: 14px; line-height: 1.6; }}
-.row {{ display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }}
-@media (max-width: 700px) {{ .row {{ grid-template-columns: 1fr; }} }}
+body {{
+    font-family: Arial, sans-serif;
+    max-width: 920px;
+    margin: 40px auto;
+    padding: 0 16px;
+    color: #111827;
+    background: #f9fafb;
+}}
+.card {{
+    background: #fff;
+    border: 1px solid #e5e7eb;
+    border-radius: 16px;
+    padding: 20px;
+    margin-bottom: 20px;
+}}
+label {{
+    display: block;
+    font-weight: 700;
+    margin-top: 14px;
+    margin-bottom: 6px;
+}}
+input, select, button {{
+    width: 100%;
+    padding: 12px;
+    border-radius: 10px;
+    border: 1px solid #d1d5db;
+    box-sizing: border-box;
+}}
+input[type="checkbox"] {{
+    width: auto;
+    margin-right: 8px;
+}}
+button {{
+    background: #111827;
+    color: white;
+    border: none;
+    font-weight: 700;
+    margin-top: 20px;
+    cursor: pointer;
+}}
+button:disabled {{
+    opacity: 0.65;
+    cursor: not-allowed;
+}}
+pre {{
+    overflow-x: auto;
+    background: #0b1020;
+    color: #f3f4f6;
+    padding: 16px;
+    border-radius: 12px;
+}}
+.small {{
+    color: #6b7280;
+    font-size: 14px;
+    line-height: 1.6;
+}}
+.row {{
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 16px;
+}}
+.checkbox-group {{
+    display: grid;
+    gap: 8px;
+    margin-top: 8px;
+}}
+.hidden {{
+    display: none;
+}}
+@media (max-width: 700px) {{
+    .row {{
+        grid-template-columns: 1fr;
+    }}
+}}
 </style>
 </head>
 <body>
 <h1>train2ai</h1>
 <p class="small">Garmin summary export and Strava summary / analysis export in a cleaner modular codebase.</p>
+
 <div class="card">
 <form id="uploadForm">
 <label for="source">Source</label>
 <select id="source" name="source">
-  <option value="garmin">Garmin</option>
+  <option value="garmin" selected>Garmin</option>
   <option value="strava">Strava</option>
 </select>
 
@@ -72,84 +140,224 @@ pre {{ overflow-x: auto; background: #0b1020; color: #f3f4f6; padding: 16px; bor
       <option value="pro" disabled>Pro (coming soon)</option>
     </select>
   </div>
-  <div>
-    <label for="mode">Mode</label>
+
+  <div id="strava-mode-wrap" class="hidden">
+    <label for="mode">Strava output</label>
     <select id="mode" name="mode">
       <option value="summary" selected>Summary</option>
-      <option value="analysis">Analysis (Strava only)</option>
+      <option value="analysis">Recent activity analysis</option>
     </select>
   </div>
 </div>
 
-<div class="row">
-  <div>
-    <label for="sport">Sport (Strava analysis)</label>
-    <select id="sport" name="sport">
-      <option value="run" selected>Run</option>
-      <option value="ride">Ride</option>
-    </select>
+<div id="garmin-fields">
+  <div class="row">
+    <div>
+      <label for="start_date">Start date (Garmin)</label>
+      <input type="date" id="start_date" name="start_date">
+    </div>
+    <div>
+      <label for="end_date">End date (Garmin)</label>
+      <input type="date" id="end_date" name="end_date">
+    </div>
   </div>
-  <div>
-    <label for="recent_count">Recent workouts</label>
-    <select id="recent_count" name="recent_count">
-      <option value="3">3</option>
-      <option value="5" selected>5</option>
-      <option value="10">10</option>
-    </select>
+
+  <label>Garmin data types</label>
+  <div class="checkbox-group">
+    <label><input type="checkbox" name="included_data" value="daily_summary" checked> daily_summary</label>
+    <label><input type="checkbox" name="included_data" value="sleep" checked> sleep</label>
+    <label><input type="checkbox" name="included_data" value="workouts" checked> workouts</label>
   </div>
 </div>
 
-<div class="row">
-  <div>
-    <label for="start_date">Start date (Garmin)</label>
-    <input type="date" id="start_date" name="start_date">
-  </div>
-  <div>
-    <label for="end_date">End date (Garmin)</label>
-    <input type="date" id="end_date" name="end_date">
+<div id="strava-summary-fields" class="hidden">
+  <div class="row">
+    <div>
+      <label for="summary_sport">Sport (Strava summary)</label>
+      <select id="summary_sport" name="sport">
+        <option value="run" selected>Run</option>
+        <option value="ride">Ride</option>
+      </select>
+    </div>
+    <div>
+      <label for="summary_recent_count">Recent workouts (summary)</label>
+      <select id="summary_recent_count" data-target-name="recent_count">
+        <option value="3">3</option>
+        <option value="5" selected>5</option>
+        <option value="10">10</option>
+      </select>
+    </div>
   </div>
 </div>
 
-<label>Garmin data types</label>
-<div class="small">
-  <label><input type="checkbox" name="included_data" value="daily_summary" checked> daily_summary</label><br>
-  <label><input type="checkbox" name="included_data" value="sleep" checked> sleep</label><br>
-  <label><input type="checkbox" name="included_data" value="workouts" checked> workouts</label>
+<div id="strava-analysis-fields" class="hidden">
+  <div class="row">
+    <div>
+      <label for="analysis_sport">Sport (Strava analysis)</label>
+      <select id="analysis_sport">
+        <option value="run" selected>Run</option>
+        <option value="ride">Ride</option>
+      </select>
+    </div>
+    <div>
+      <label for="analysis_recent_count">Recent workouts</label>
+      <select id="analysis_recent_count">
+        <option value="3">3</option>
+        <option value="5" selected>5</option>
+        <option value="10">10</option>
+      </select>
+    </div>
+  </div>
+  <p class="small" style="margin-top:12px;">
+    Analysis mode uses FIT files from the Strava export and compresses each activity stream to around 200 points.
+  </p>
 </div>
 
 <button type="submit">Generate dataset</button>
 </form>
+
 <div id="message" class="small" style="margin-top:12px;"></div>
 </div>
+
 <div class="card">
 <h2>Sample analysis payload shape</h2>
-<pre>{json.dumps(build_sample_analysis_dataset(), indent=2)}</pre>
+<pre>{sample_json}</pre>
 </div>
+
 <script>
-const form = document.getElementById('uploadForm');
-const message = document.getElementById('message');
-form.addEventListener('submit', async (e) => {{
-  e.preventDefault();
-  message.textContent = 'Processing...';
-  const formData = new FormData(form);
-  const res = await fetch('/upload', {{ method: 'POST', body: formData }});
-  if (!res.ok) {{
-    let text = 'Request failed';
+const form = document.getElementById("uploadForm");
+const message = document.getElementById("message");
+const sourceSelect = document.getElementById("source");
+const modeSelect = document.getElementById("mode");
+
+const garminFields = document.getElementById("garmin-fields");
+const stravaModeWrap = document.getElementById("strava-mode-wrap");
+const stravaSummaryFields = document.getElementById("strava-summary-fields");
+const stravaAnalysisFields = document.getElementById("strava-analysis-fields");
+
+const startDateInput = document.getElementById("start_date");
+const endDateInput = document.getElementById("end_date");
+
+const summarySport = document.getElementById("summary_sport");
+const summaryRecentCount = document.getElementById("summary_recent_count");
+
+const analysisSport = document.getElementById("analysis_sport");
+const analysisRecentCount = document.getElementById("analysis_recent_count");
+
+function show(el) {{
+    el.classList.remove("hidden");
+}}
+
+function hide(el) {{
+    el.classList.add("hidden");
+}}
+
+function syncStravaFields() {{
+    const mode = modeSelect.value;
+
+    if (mode === "analysis") {{
+        analysisSport.name = "sport";
+        analysisRecentCount.name = "recent_count";
+
+        summarySport.name = "";
+        summaryRecentCount.name = "";
+
+        analysisSport.value = analysisSport.value || "run";
+        analysisRecentCount.value = analysisRecentCount.value || "5";
+    }} else {{
+        summarySport.name = "sport";
+        summaryRecentCount.name = "recent_count";
+
+        analysisSport.name = "";
+        analysisRecentCount.name = "";
+
+        summarySport.value = summarySport.value || "run";
+        summaryRecentCount.value = summaryRecentCount.value || "5";
+    }}
+}}
+
+function toggleFields() {{
+    const source = sourceSelect.value;
+    const mode = modeSelect.value;
+
+    if (source === "garmin") {{
+        show(garminFields);
+        hide(stravaModeWrap);
+        hide(stravaSummaryFields);
+        hide(stravaAnalysisFields);
+
+        startDateInput.disabled = false;
+        endDateInput.disabled = false;
+        modeSelect.disabled = true;
+
+        summarySport.name = "";
+        summaryRecentCount.name = "";
+        analysisSport.name = "";
+        analysisRecentCount.name = "";
+    }} else {{
+        hide(garminFields);
+        show(stravaModeWrap);
+        modeSelect.disabled = false;
+
+        startDateInput.disabled = true;
+        endDateInput.disabled = true;
+
+        if (mode === "analysis") {{
+            hide(stravaSummaryFields);
+            show(stravaAnalysisFields);
+        }} else {{
+            show(stravaSummaryFields);
+            hide(stravaAnalysisFields);
+        }}
+
+        syncStravaFields();
+    }}
+}}
+
+sourceSelect.addEventListener("change", toggleFields);
+modeSelect.addEventListener("change", toggleFields);
+toggleFields();
+
+form.addEventListener("submit", async (e) => {{
+    e.preventDefault();
+    message.textContent = "Processing...";
+
+    const formData = new FormData(form);
+
+    if (sourceSelect.value === "garmin") {{
+        formData.set("mode", "summary");
+    }}
+
     try {{
-      const data = await res.json();
-      text = data.detail || text;
-    }} catch (_) {{}}
-    message.textContent = text;
-    return;
-  }}
-  const blob = await res.blob();
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = 'train2ai_dataset.json';
-  a.click();
-  URL.revokeObjectURL(url);
-  message.textContent = 'Dataset downloaded.';
+        const res = await fetch("/upload", {{
+            method: "POST",
+            body: formData
+        }});
+
+        if (!res.ok) {{
+            let text = "Request failed";
+            try {{
+                const data = await res.json();
+                text = data.detail || text;
+            }} catch (_) {{}}
+            message.textContent = text;
+            return;
+        }}
+
+        const blob = await res.blob();
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = "train2ai_dataset.json";
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        URL.revokeObjectURL(url);
+
+        message.textContent = "Dataset downloaded.";
+    }} catch (_) {{
+        message.textContent = "Network error. Please try again.";
+    }}
 }});
 </script>
 </body>
@@ -227,6 +435,7 @@ async def precheck(
 ):
     ip = get_client_ip(request)
     validate_plan(plan)
+
     if source not in ALLOWED_SOURCES:
         raise HTTPException(status_code=400, detail="Invalid source.")
     if mode not in ALLOWED_MODES:
@@ -241,13 +450,13 @@ async def precheck(
             raise HTTPException(status_code=400, detail="End date must be on or after start date.")
         enforce_plan_limit(plan, start, end)
 
-    if source == "strava" and mode == "analysis":
-        # No date range limit; recent_count keeps payload small.
-        pass
-
     check_usage_limit_only(ip, plan)
     used = get_usage_count(ip, plan)
-    return {"ok": True, "used_exports": used, "remaining_exports": max(FREE_TOTAL_LIMIT - used, 0)}
+    return {
+        "ok": True,
+        "used_exports": used,
+        "remaining_exports": max(FREE_TOTAL_LIMIT - used, 0),
+    }
 
 
 @app.post("/upload")
@@ -280,8 +489,10 @@ async def upload(
     check_usage_limit_only(ip, plan)
 
     if source == "garmin":
+        mode = "summary"
         if not start_date or not end_date:
             raise HTTPException(status_code=400, detail="Garmin requires start_date and end_date.")
+
         selected = garmin.normalize_included_data(included_data or [])
         if not selected:
             raise HTTPException(status_code=400, detail="Please select at least one Garmin data type.")
@@ -291,9 +502,6 @@ async def upload(
         if start > end:
             raise HTTPException(status_code=400, detail="End date must be on or after start date.")
         enforce_plan_limit(plan, start, end)
-
-    if source == "strava" and mode == "analysis" and file.filename.lower().endswith(".zip") is False:
-        raise HTTPException(status_code=400, detail="Upload a Strava export ZIP.")
 
     try:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -310,12 +518,28 @@ async def upload(
             if source == "garmin":
                 found = garmin.scan_garmin_files(temp_dir)
                 garmin.validate_detected_files(found, selected)
-                daily_summary = garmin.collect_daily_summary(found["daily_summary"], start, end) if "daily_summary" in selected else []
-                sleep = garmin.collect_sleep(found["sleep"], start, end) if "sleep" in selected else []
-                workouts = garmin.collect_workouts(found["workouts"], start, end) if "workouts" in selected else []
-                collected = {"daily_summary": daily_summary, "sleep": sleep, "workouts": workouts}
+
+                daily_summary = (
+                    garmin.collect_daily_summary(found["daily_summary"], start, end)
+                    if "daily_summary" in selected else []
+                )
+                sleep = (
+                    garmin.collect_sleep(found["sleep"], start, end)
+                    if "sleep" in selected else []
+                )
+                workouts = (
+                    garmin.collect_workouts(found["workouts"], start, end)
+                    if "workouts" in selected else []
+                )
+
+                collected = {
+                    "daily_summary": daily_summary,
+                    "sleep": sleep,
+                    "workouts": workouts,
+                }
                 garmin.validate_collected_results(collected, selected, start_date, end_date)
                 result = garmin.build_output(plan, start_date, end_date, selected, daily_summary, sleep, workouts)
+
             else:
                 found = strava.scan_strava_files(temp_dir)
                 csv_path = found.get("activities_csv")
@@ -323,23 +547,43 @@ async def upload(
 
                 if mode == "summary":
                     if not csv_path:
-                        raise HTTPException(status_code=400, detail="activities.csv was not found in the Strava export ZIP.")
-                    workouts = strava.collect_strava_summary(csv_path, sport=sport, recent_count=recent_count)
+                        raise HTTPException(
+                            status_code=400,
+                            detail="activities.csv was not found in the Strava export ZIP.",
+                        )
+                    workouts = strava.collect_strava_summary(
+                        csv_path,
+                        sport=sport,
+                        recent_count=recent_count,
+                    )
                     if not workouts:
-                        raise HTTPException(status_code=400, detail=f"No {sport} activities found in activities.csv.")
+                        raise HTTPException(
+                            status_code=400,
+                            detail=f"No {sport} activities found in activities.csv.",
+                        )
                     result = strava.build_summary_output(plan, sport, recent_count, workouts)
+
                 else:
                     if not fit_files:
-                        raise HTTPException(status_code=400, detail="No FIT files were found in the Strava export ZIP.")
-                    workouts = strava.build_analysis_workouts(fit_files, sport=sport, recent_count=recent_count)
+                        raise HTTPException(
+                            status_code=400,
+                            detail="No FIT files were found in the Strava export ZIP.",
+                        )
+                    workouts = strava.build_analysis_workouts(
+                        fit_files,
+                        sport=sport,
+                        recent_count=recent_count,
+                    )
                     result = strava.build_analysis_output(plan, sport, recent_count, workouts)
 
             increment_usage(ip, plan)
+
             return Response(
                 content=json.dumps(result, indent=2, ensure_ascii=False, default=str),
                 media_type="application/json",
                 headers={"Content-Disposition": "attachment; filename=train2ai_dataset.json"},
             )
+
     except HTTPException:
         raise
     except Exception as exc:
