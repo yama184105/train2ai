@@ -4,6 +4,7 @@ import json
 import os
 import tempfile
 import zipfile
+from typing import Optional
 
 from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import HTMLResponse, Response
@@ -12,7 +13,6 @@ from app.config import (
     ALLOWED_MODES,
     ALLOWED_SOURCES,
     ALLOWED_SPORTS,
-    ANALYSIS_RECENT_CHOICES,
     FREE_MAX_DAYS,
     FREE_TOTAL_LIMIT,
     PRO_MAX_DAYS,
@@ -29,9 +29,14 @@ from app.utils.usage import (
 app = FastAPI(title="train2ai")
 
 
+ANALYSIS_RECENT_CHOICES = {1, 3, 5, 10}
+STRAVA_SUMMARY_SPORTS = {"all", "run", "ride"}
+ANALYSIS_SCOPES = {"recent", "date"}
+
+
 @app.get("/", response_class=HTMLResponse)
 def home() -> str:
-    sample_json = json.dumps(build_sample_analysis_dataset(), indent=2)
+    sample_json = json.dumps(build_sample_analysis_dataset(), indent=2, ensure_ascii=False)
 
     return f"""
 <!DOCTYPE html>
@@ -43,7 +48,7 @@ def home() -> str:
 <style>
 body {{
     font-family: Arial, sans-serif;
-    max-width: 920px;
+    max-width: 980px;
     margin: 40px auto;
     padding: 0 16px;
     color: #111827;
@@ -68,6 +73,7 @@ input, select, button {{
     border-radius: 10px;
     border: 1px solid #d1d5db;
     box-sizing: border-box;
+    font-size: 16px;
 }}
 input[type="checkbox"] {{
     width: auto;
@@ -145,7 +151,7 @@ pre {{
     <label for="mode">Strava output</label>
     <select id="mode" name="mode">
       <option value="summary" selected>Summary</option>
-      <option value="analysis">Recent activity analysis</option>
+      <option value="analysis">Analysis</option>
     </select>
   </div>
 </div>
@@ -170,47 +176,75 @@ pre {{
   </div>
 </div>
 
-<div id="strava-summary-fields" class="hidden">
-  <div class="row">
-    <div>
-      <label for="summary_sport">Sport (Strava summary)</label>
-      <select id="summary_sport" name="sport">
-        <option value="run" selected>Run</option>
-        <option value="ride">Ride</option>
-      </select>
+<div id="strava-fields" class="hidden">
+  <div id="strava-summary-fields">
+    <div class="row">
+      <div>
+        <label for="summary_sport">Sport (Strava summary)</label>
+        <select id="summary_sport">
+          <option value="all" selected>All</option>
+          <option value="run">Run</option>
+          <option value="ride">Ride</option>
+        </select>
+      </div>
+      <div></div>
     </div>
-    <div>
-      <label for="summary_recent_count">Recent workouts (summary)</label>
-      <select id="summary_recent_count" data-target-name="recent_count">
-        <option value="3">3</option>
-        <option value="5" selected>5</option>
-        <option value="10">10</option>
-      </select>
-    </div>
-  </div>
-</div>
 
-<div id="strava-analysis-fields" class="hidden">
-  <div class="row">
-    <div>
-      <label for="analysis_sport">Sport (Strava analysis)</label>
-      <select id="analysis_sport">
-        <option value="run" selected>Run</option>
-        <option value="ride">Ride</option>
-      </select>
-    </div>
-    <div>
-      <label for="analysis_recent_count">Recent workouts</label>
-      <select id="analysis_recent_count">
-        <option value="3">3</option>
-        <option value="5" selected>5</option>
-        <option value="10">10</option>
-      </select>
+    <div class="row">
+      <div>
+        <label for="summary_start_date">Start date (Strava summary)</label>
+        <input type="date" id="summary_start_date">
+      </div>
+      <div>
+        <label for="summary_end_date">End date (Strava summary)</label>
+        <input type="date" id="summary_end_date">
+      </div>
     </div>
   </div>
-  <p class="small" style="margin-top:12px;">
-    Analysis mode uses FIT files from the Strava export and compresses each activity stream to around 200 points.
-  </p>
+
+  <div id="strava-analysis-fields" class="hidden">
+    <div class="row">
+      <div>
+        <label for="analysis_sport">Sport (Strava analysis)</label>
+        <select id="analysis_sport">
+          <option value="run" selected>Run</option>
+          <option value="ride">Ride</option>
+        </select>
+      </div>
+      <div>
+        <label for="analysis_scope">Analysis scope</label>
+        <select id="analysis_scope">
+          <option value="recent" selected>Recent workouts</option>
+          <option value="date">Specific date</option>
+        </select>
+      </div>
+    </div>
+
+    <div id="analysis-recent-wrap" class="row">
+      <div>
+        <label for="analysis_recent_count">Recent workouts</label>
+        <select id="analysis_recent_count">
+          <option value="1">1</option>
+          <option value="3">3</option>
+          <option value="5" selected>5</option>
+          <option value="10">10</option>
+        </select>
+      </div>
+      <div></div>
+    </div>
+
+    <div id="analysis-date-wrap" class="row hidden">
+      <div>
+        <label for="analysis_activity_date">Activity date</label>
+        <input type="date" id="analysis_activity_date">
+      </div>
+      <div></div>
+    </div>
+
+    <p class="small" style="margin-top:12px;">
+      Analysis mode uses FIT files from the Strava export and compresses each activity stream to around 200 points.
+    </p>
+  </div>
 </div>
 
 <button type="submit">Generate dataset</button>
@@ -227,11 +261,13 @@ pre {{
 <script>
 const form = document.getElementById("uploadForm");
 const message = document.getElementById("message");
+
 const sourceSelect = document.getElementById("source");
 const modeSelect = document.getElementById("mode");
 
 const garminFields = document.getElementById("garmin-fields");
 const stravaModeWrap = document.getElementById("strava-mode-wrap");
+const stravaFields = document.getElementById("strava-fields");
 const stravaSummaryFields = document.getElementById("strava-summary-fields");
 const stravaAnalysisFields = document.getElementById("strava-analysis-fields");
 
@@ -239,10 +275,16 @@ const startDateInput = document.getElementById("start_date");
 const endDateInput = document.getElementById("end_date");
 
 const summarySport = document.getElementById("summary_sport");
-const summaryRecentCount = document.getElementById("summary_recent_count");
+const summaryStartDate = document.getElementById("summary_start_date");
+const summaryEndDate = document.getElementById("summary_end_date");
 
 const analysisSport = document.getElementById("analysis_sport");
+const analysisScope = document.getElementById("analysis_scope");
 const analysisRecentCount = document.getElementById("analysis_recent_count");
+const analysisActivityDate = document.getElementById("analysis_activity_date");
+
+const analysisRecentWrap = document.getElementById("analysis-recent-wrap");
+const analysisDateWrap = document.getElementById("analysis-date-wrap");
 
 function show(el) {{
     el.classList.remove("hidden");
@@ -252,63 +294,78 @@ function hide(el) {{
     el.classList.add("hidden");
 }}
 
+function clearDynamicNames() {{
+    summarySport.name = "";
+    summaryStartDate.name = "";
+    summaryEndDate.name = "";
+
+    analysisSport.name = "";
+    analysisScope.name = "";
+    analysisRecentCount.name = "";
+    analysisActivityDate.name = "";
+}}
+
+function syncAnalysisScopeFields() {{
+    const scope = analysisScope.value;
+
+    if (scope === "recent") {{
+        show(analysisRecentWrap);
+        hide(analysisDateWrap);
+
+        analysisRecentCount.name = "recent_count";
+        analysisActivityDate.name = "";
+    }} else {{
+        hide(analysisRecentWrap);
+        show(analysisDateWrap);
+
+        analysisRecentCount.name = "";
+        analysisActivityDate.name = "activity_date";
+    }}
+}}
+
 function syncStravaFields() {{
+    clearDynamicNames();
+
     const mode = modeSelect.value;
 
-    if (mode === "analysis") {{
-        analysisSport.name = "sport";
-        analysisRecentCount.name = "recent_count";
+    if (mode === "summary") {{
+        show(stravaSummaryFields);
+        hide(stravaAnalysisFields);
 
-        summarySport.name = "";
-        summaryRecentCount.name = "";
-
-        analysisSport.value = analysisSport.value || "run";
-        analysisRecentCount.value = analysisRecentCount.value || "5";
-    }} else {{
         summarySport.name = "sport";
-        summaryRecentCount.name = "recent_count";
+        summaryStartDate.name = "start_date";
+        summaryEndDate.name = "end_date";
+    }} else {{
+        hide(stravaSummaryFields);
+        show(stravaAnalysisFields);
 
-        analysisSport.name = "";
-        analysisRecentCount.name = "";
-
-        summarySport.value = summarySport.value || "run";
-        summaryRecentCount.value = summaryRecentCount.value || "5";
+        analysisSport.name = "sport";
+        analysisScope.name = "analysis_scope";
+        syncAnalysisScopeFields();
     }}
 }}
 
 function toggleFields() {{
     const source = sourceSelect.value;
-    const mode = modeSelect.value;
 
     if (source === "garmin") {{
         show(garminFields);
         hide(stravaModeWrap);
-        hide(stravaSummaryFields);
-        hide(stravaAnalysisFields);
+        hide(stravaFields);
 
         startDateInput.disabled = false;
         endDateInput.disabled = false;
         modeSelect.disabled = true;
 
-        summarySport.name = "";
-        summaryRecentCount.name = "";
-        analysisSport.name = "";
-        analysisRecentCount.name = "";
+        clearDynamicNames();
     }} else {{
         hide(garminFields);
         show(stravaModeWrap);
-        modeSelect.disabled = false;
+        show(stravaFields);
 
         startDateInput.disabled = true;
         endDateInput.disabled = true;
-
-        if (mode === "analysis") {{
-            hide(stravaSummaryFields);
-            show(stravaAnalysisFields);
-        }} else {{
-            show(stravaSummaryFields);
-            hide(stravaAnalysisFields);
-        }}
+        modeSelect.disabled = false;
 
         syncStravaFields();
     }}
@@ -316,6 +373,8 @@ function toggleFields() {{
 
 sourceSelect.addEventListener("change", toggleFields);
 modeSelect.addEventListener("change", toggleFields);
+analysisScope.addEventListener("change", syncAnalysisScopeFields);
+
 toggleFields();
 
 form.addEventListener("submit", async (e) => {{
@@ -383,9 +442,10 @@ def sample() -> Response:
 def build_sample_analysis_dataset() -> dict:
     return {
         "source": "strava",
-        "schema_version": "2.0",
+        "schema_version": "2.1",
         "plan": "free",
         "mode": "analysis",
+        "analysis_scope": "recent",
         "sport": "run",
         "recent_count": 5,
         "target_stream_points": 200,
@@ -419,9 +479,15 @@ def validate_plan(plan: str) -> None:
 def enforce_plan_limit(plan: str, start, end) -> None:
     days = (end - start).days + 1
     if plan == "free" and days > FREE_MAX_DAYS:
-        raise HTTPException(status_code=400, detail=f"Free plan supports up to {FREE_MAX_DAYS} days per export.")
+        raise HTTPException(
+            status_code=400,
+            detail=f"Free plan supports up to {FREE_MAX_DAYS} days per export."
+        )
     if plan == "pro" and days > PRO_MAX_DAYS:
-        raise HTTPException(status_code=400, detail=f"Pro plan supports up to {PRO_MAX_DAYS} days per export.")
+        raise HTTPException(
+            status_code=400,
+            detail=f"Pro plan supports up to {PRO_MAX_DAYS} days per export."
+        )
 
 
 @app.post("/precheck")
@@ -429,8 +495,8 @@ async def precheck(
     request: Request,
     source: str = Form("garmin"),
     mode: str = Form("summary"),
-    start_date: str | None = Form(None),
-    end_date: str | None = Form(None),
+    start_date: Optional[str] = Form(None),
+    end_date: Optional[str] = Form(None),
     plan: str = Form("free"),
 ):
     ip = get_client_ip(request)
@@ -466,11 +532,13 @@ async def upload(
     source: str = Form("garmin"),
     plan: str = Form("free"),
     mode: str = Form("summary"),
-    start_date: str | None = Form(None),
-    end_date: str | None = Form(None),
-    included_data: list[str] | None = Form(None),
+    start_date: Optional[str] = Form(None),
+    end_date: Optional[str] = Form(None),
+    included_data: Optional[list[str]] = Form(None),
     sport: str = Form("run"),
     recent_count: int = Form(5),
+    analysis_scope: str = Form("recent"),
+    activity_date: Optional[str] = Form(None),
 ):
     ip = get_client_ip(request)
 
@@ -480,11 +548,6 @@ async def upload(
         raise HTTPException(status_code=400, detail="Invalid source.")
     if mode not in ALLOWED_MODES:
         raise HTTPException(status_code=400, detail="Invalid mode.")
-    if sport not in ALLOWED_SPORTS:
-        raise HTTPException(status_code=400, detail="sport must be run or ride.")
-    if recent_count not in ANALYSIS_RECENT_CHOICES:
-        raise HTTPException(status_code=400, detail="recent_count must be 3, 5, or 10.")
-
     validate_plan(plan)
     check_usage_limit_only(ip, plan)
 
@@ -502,6 +565,30 @@ async def upload(
         if start > end:
             raise HTTPException(status_code=400, detail="End date must be on or after start date.")
         enforce_plan_limit(plan, start, end)
+
+    else:
+        if mode == "summary":
+            if sport not in STRAVA_SUMMARY_SPORTS:
+                raise HTTPException(status_code=400, detail="Strava summary sport must be all, run, or ride.")
+            if not start_date or not end_date:
+                raise HTTPException(status_code=400, detail="Strava summary requires start_date and end_date.")
+            start = parse_input_date(start_date, "start_date")
+            end = parse_input_date(end_date, "end_date")
+            if start > end:
+                raise HTTPException(status_code=400, detail="End date must be on or after start date.")
+
+        else:
+            if sport not in ALLOWED_SPORTS:
+                raise HTTPException(status_code=400, detail="Strava analysis sport must be run or ride.")
+            if analysis_scope not in ANALYSIS_SCOPES:
+                raise HTTPException(status_code=400, detail="analysis_scope must be recent or date.")
+            if analysis_scope == "recent":
+                if recent_count not in ANALYSIS_RECENT_CHOICES:
+                    raise HTTPException(status_code=400, detail="recent_count must be 1, 3, 5, or 10.")
+            else:
+                if not activity_date:
+                    raise HTTPException(status_code=400, detail="Specific date analysis requires activity_date.")
+                parse_input_date(activity_date, "activity_date")
 
     try:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -538,7 +625,15 @@ async def upload(
                     "workouts": workouts,
                 }
                 garmin.validate_collected_results(collected, selected, start_date, end_date)
-                result = garmin.build_output(plan, start_date, end_date, selected, daily_summary, sleep, workouts)
+                result = garmin.build_output(
+                    plan,
+                    start_date,
+                    end_date,
+                    selected,
+                    daily_summary,
+                    sleep,
+                    workouts,
+                )
 
             else:
                 found = strava.scan_strava_files(temp_dir)
@@ -551,17 +646,26 @@ async def upload(
                             status_code=400,
                             detail="activities.csv was not found in the Strava export ZIP.",
                         )
+
                     workouts = strava.collect_strava_summary(
                         csv_path,
                         sport=sport,
-                        recent_count=recent_count,
+                        start_date=start_date,
+                        end_date=end_date,
                     )
                     if not workouts:
                         raise HTTPException(
                             status_code=400,
-                            detail=f"No {sport} activities found in activities.csv.",
+                            detail="No matching Strava activities were found in the selected period.",
                         )
-                    result = strava.build_summary_output(plan, sport, recent_count, workouts)
+
+                    result = strava.build_summary_output(
+                        plan=plan,
+                        sport=sport,
+                        start_date=start_date,
+                        end_date=end_date,
+                        workouts=workouts,
+                    )
 
                 else:
                     if not fit_files:
@@ -569,12 +673,34 @@ async def upload(
                             status_code=400,
                             detail="No FIT files were found in the Strava export ZIP.",
                         )
-                    workouts = strava.build_analysis_workouts(
-                        fit_files,
-                        sport=sport,
-                        recent_count=recent_count,
-                    )
-                    result = strava.build_analysis_output(plan, sport, recent_count, workouts)
+
+                    if analysis_scope == "recent":
+                        workouts = strava.build_analysis_workouts(
+                            fit_files,
+                            sport=sport,
+                            recent_count=recent_count,
+                        )
+                        result = strava.build_analysis_output(
+                            plan=plan,
+                            sport=sport,
+                            recent_count=recent_count,
+                            workouts=workouts,
+                            analysis_scope="recent",
+                        )
+                    else:
+                        workouts = strava.build_analysis_workouts_for_date(
+                            fit_files,
+                            sport=sport,
+                            activity_date=activity_date,
+                        )
+                        result = strava.build_analysis_output(
+                            plan=plan,
+                            sport=sport,
+                            recent_count=None,
+                            workouts=workouts,
+                            analysis_scope="date",
+                            activity_date=activity_date,
+                        )
 
             increment_usage(ip, plan)
 
