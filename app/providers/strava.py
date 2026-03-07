@@ -54,13 +54,6 @@ def _safe_float(value: Any) -> float | None:
         return None
 
 
-def _safe_int(value: Any) -> int | None:
-    f = _safe_float(value)
-    if f is None:
-        return None
-    return int(round(f))
-
-
 def _parse_strava_csv_date(value: str) -> datetime.date | None:
     if not value:
         return None
@@ -325,6 +318,28 @@ def _build_analysis_workout_from_fit(fit_gz_path: str) -> dict[str, Any] | None:
             pass
 
 
+def _load_activity_id_candidates(csv_path: str, sport: str, activity_date: str) -> set[str]:
+    target_date = datetime.strptime(activity_date, "%Y-%m-%d").date()
+    ids: set[str] = set()
+
+    with open(csv_path, "r", encoding="utf-8-sig", newline="") as f:
+        reader = csv.DictReader(f)
+        for row in reader:
+            row_date = _parse_strava_csv_date(row.get("Activity Date", ""))
+            if row_date != target_date:
+                continue
+
+            normalized_sport = _normalize_summary_sport(row.get("Activity Type"))
+            if normalized_sport != sport:
+                continue
+
+            activity_id = str(row.get("Activity ID", "")).strip()
+            if activity_id:
+                ids.add(activity_id)
+
+    return ids
+
+
 def build_analysis_workouts(
     fit_files: list[str],
     sport: str,
@@ -360,19 +375,33 @@ def build_analysis_workouts(
 
 
 def build_analysis_workouts_for_date(
+    csv_path: str,
     fit_files: list[str],
     sport: str,
     activity_date: str,
 ) -> list[dict[str, Any]]:
+    candidate_ids = _load_activity_id_candidates(csv_path, sport, activity_date)
+    if not candidate_ids:
+        raise ValueError(f"No {sport} activities found for {activity_date}.")
+
+    target_fit_files = []
+    for fit_path in fit_files:
+        basename = os.path.basename(fit_path)
+        if basename.endswith(".fit.gz"):
+            activity_id = basename[:-7]
+            if activity_id in candidate_ids:
+                target_fit_files.append(fit_path)
+
+    if not target_fit_files:
+        raise ValueError(f"No FIT files matched the {sport} activities on {activity_date}.")
+
     workouts: list[dict[str, Any]] = []
 
-    for fit_path in fit_files:
+    for fit_path in target_fit_files:
         workout = _build_analysis_workout_from_fit(fit_path)
         if not workout:
             continue
         if not _fit_sport_matches(workout.get("sport_raw"), sport):
-            continue
-        if workout.get("date") != activity_date:
             continue
         workouts.append(
             {
@@ -388,7 +417,7 @@ def build_analysis_workouts_for_date(
 
     workouts.sort(key=lambda x: x.get("date") or "")
     if not workouts:
-        raise ValueError(f"No {sport} activities found for {activity_date}.")
+        raise ValueError(f"No readable {sport} FIT activities found for {activity_date}.")
     return workouts
 
 
