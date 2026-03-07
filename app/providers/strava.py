@@ -25,6 +25,7 @@ SPORT_MAP_ANALYSIS = {
 def scan_strava_files(root_dir: str) -> dict[str, Any]:
     activities_csv = None
     fit_files: list[str] = []
+    fit_file_map: dict[str, str] = {}
 
     for root, _, files in os.walk(root_dir):
         for name in files:
@@ -36,9 +37,15 @@ def scan_strava_files(root_dir: str) -> dict[str, Any]:
             elif lower.endswith(".fit.gz"):
                 fit_files.append(path)
 
+                basename = os.path.basename(path)
+                activity_id = basename[:-7]  # remove ".fit.gz"
+                if activity_id:
+                    fit_file_map[activity_id] = path
+
     return {
         "activities_csv": activities_csv,
         "fit_files": sorted(fit_files),
+        "fit_file_map": fit_file_map,
     }
 
 
@@ -147,7 +154,7 @@ def build_summary_output(
 ) -> dict[str, Any]:
     return {
         "source": "strava",
-        "schema_version": "2.1",
+        "schema_version": "2.2",
         "plan": plan,
         "mode": "summary",
         "sport": sport,
@@ -171,17 +178,6 @@ def _extract_fit_to_temp_path(fit_gz_path: str) -> str:
         out.write(gz.read())
 
     return tmp_path
-
-
-def _read_fit_messages(fit_path: str, message_name: str) -> list[dict[str, Any]]:
-    fit = FitFile(fit_path)
-    items: list[dict[str, Any]] = []
-    for msg in fit.get_messages(message_name):
-        row = {}
-        for field in msg:
-            row[field.name] = field.value
-        items.append(row)
-    return items
 
 
 def _fit_sport_matches(fit_sport: str | None, requested_sport: str) -> bool:
@@ -231,6 +227,7 @@ def _compress_records(records: list[dict[str, Any]], target_points: int = 200) -
         end_idx = int(math.floor((i + 1) * chunk_size))
         if end_idx <= start_idx:
             end_idx = start_idx + 1
+
         chunk = records[start_idx:end_idx]
         if not chunk:
             continue
@@ -278,14 +275,28 @@ def _compress_records(records: list[dict[str, Any]], target_points: int = 200) -
 
 def _build_analysis_workout_from_fit(fit_gz_path: str) -> dict[str, Any] | None:
     temp_fit_path = _extract_fit_to_temp_path(fit_gz_path)
-    try:
-        sessions = _read_fit_messages(temp_fit_path, "session")
-        records = _read_fit_messages(temp_fit_path, "record")
 
-        if not sessions:
+    try:
+        fit = FitFile(temp_fit_path)
+
+        session = None
+        for msg in fit.get_messages("session"):
+            row = {}
+            for field in msg:
+                row[field.name] = field.value
+            session = row
+            break
+
+        if not session:
             return None
 
-        session = sessions[0]
+        records: list[dict[str, Any]] = []
+        for msg in fit.get_messages("record"):
+            row = {}
+            for field in msg:
+                row[field.name] = field.value
+            records.append(row)
+
         start_time = session.get("start_time")
         sport = session.get("sport")
 
@@ -318,65 +329,118 @@ def _build_analysis_workout_from_fit(fit_gz_path: str) -> dict[str, Any] | None:
             pass
 
 
-def _load_activity_id_candidates(csv_path: str, sport: str, activity_date: str) -> set[str]:
-    target_date = datetime.strptime(activity_date, "%Y-%m-%d").date()
-    ids: set[str] = set()
+def _read_activity_rows(csv_path: str) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
 
     with open(csv_path, "r", encoding="utf-8-sig", newline="") as f:
         reader = csv.DictReader(f)
-        for row in reader:
-            row_date = _parse_strava_csv_date(row.get("Activity Date", ""))
-            if row_date != target_date:
-                continue
+        for raw in reader:
+            activity_date = _parse_strava_csv_date(raw.get("Activity Date", ""))
+            normalized_sport = _normalize_summary_sport(raw.get("Activity Type"))
+            activity_id = str(raw.get("Activity ID", "")).strip()
 
-            normalized_sport = _normalize_summary_sport(row.get("Activity Type"))
-            if normalized_sport != sport:
-                continue
+            rows.append(
+                {
+                    "activity_id": activity_id,
+                    "date": activity_date.isoformat() if activity_date else None,
+                    "date_obj": activity_date,
+                    "sport": normalized_sport,
+                    "title": raw.get("Activity Name"),
+                }
+            )
 
-            activity_id = str(row.get("Activity ID", "")).strip()
-            if activity_id:
-                ids.add(activity_id)
+    return rows
+
+
+def _load_recent_activity_ids(csv_path: str, sport: str, recent_count: int) -> list[str]:
+    rows = _read_activity_rows(csv_path)
+
+    filtered = [
+        row for row in rows
+        if row.get("sport") == sport and row.get("date_obj") is not None and row.get("activity_id")
+    ]
+
+    filtered.sort(key=lambda x: (x["date_obj"], x["activity_id"]), reverse=True)
+
+    selected = filtered[:recent_count]
+    return [row["activity_id"] for row in selected]
+
+
+def _load_activity_id_candidates(csv_path: str, sport: str, activity_date: str) -> set[str]:
+    target_date = datetime.strptime(activity_date, "%Y-%m-%d").date()
+    rows = _read_activity_rows(csv_path)
+
+    ids: set[str] = set()
+    for row in rows:
+        if row.get("date_obj") != target_date:
+            continue
+        if row.get("sport") != sport:
+            continue
+        activity_id = row.get("activity_id")
+        if activity_id:
+            ids.add(activity_id)
 
     return ids
 
 
+def _select_fit_files_for_recent(
+    csv_path: str,
+    fit_file_map: dict[str, str],
+    sport: str,
+    recent_count: int,
+) -> list[str]:
+    recent_ids = _load_recent_activity_ids(csv_path, sport, recent_count)
+    selected: list[str] = []
+
+    for activity_id in recent_ids:
+        fit_path = fit_file_map.get(activity_id)
+        if fit_path:
+            selected.append(fit_path)
+
+    return selected
+
+
 def build_analysis_workouts(
-    fit_files: list[str],
+    csv_path: str,
+    fit_file_map: dict[str, str],
     sport: str,
     recent_count: int,
 ) -> list[dict[str, Any]]:
+    target_fit_files = _select_fit_files_for_recent(
+        csv_path=csv_path,
+        fit_file_map=fit_file_map,
+        sport=sport,
+        recent_count=recent_count,
+    )
+
     workouts: list[dict[str, Any]] = []
 
-    for fit_path in fit_files:
+    for fit_path in target_fit_files:
         workout = _build_analysis_workout_from_fit(fit_path)
         if not workout:
             continue
         if not _fit_sport_matches(workout.get("sport_raw"), sport):
             continue
-        workouts.append(workout)
 
-    workouts.sort(key=lambda x: x.get("date") or "", reverse=True)
-    selected = workouts[:recent_count]
-
-    cleaned = []
-    for w in selected:
-        cleaned.append(
+        workouts.append(
             {
-                "date": w["date"],
+                "date": workout["date"],
                 "sport": sport,
-                "distance_km": w["distance_km"],
-                "duration_min": w["duration_min"],
-                "avg_hr": w["avg_hr"],
-                "max_hr": w["max_hr"],
-                "compressed_streams": w["compressed_streams"],
+                "distance_km": workout["distance_km"],
+                "duration_min": workout["duration_min"],
+                "avg_hr": workout["avg_hr"],
+                "max_hr": workout["max_hr"],
+                "compressed_streams": workout["compressed_streams"],
             }
         )
-    return cleaned
+
+    workouts.sort(key=lambda x: x.get("date") or "", reverse=True)
+    return workouts
 
 
 def build_analysis_workouts_for_date(
     csv_path: str,
-    fit_files: list[str],
+    fit_file_map: dict[str, str],
     sport: str,
     activity_date: str,
 ) -> list[dict[str, Any]]:
@@ -385,12 +449,10 @@ def build_analysis_workouts_for_date(
         raise ValueError(f"No {sport} activities found for {activity_date}.")
 
     target_fit_files = []
-    for fit_path in fit_files:
-        basename = os.path.basename(fit_path)
-        if basename.endswith(".fit.gz"):
-            activity_id = basename[:-7]
-            if activity_id in candidate_ids:
-                target_fit_files.append(fit_path)
+    for activity_id in candidate_ids:
+        fit_path = fit_file_map.get(activity_id)
+        if fit_path:
+            target_fit_files.append(fit_path)
 
     if not target_fit_files:
         raise ValueError(f"No FIT files matched the {sport} activities on {activity_date}.")
@@ -403,6 +465,7 @@ def build_analysis_workouts_for_date(
             continue
         if not _fit_sport_matches(workout.get("sport_raw"), sport):
             continue
+
         workouts.append(
             {
                 "date": workout["date"],
@@ -431,7 +494,7 @@ def build_analysis_output(
 ) -> dict[str, Any]:
     result = {
         "source": "strava",
-        "schema_version": "2.1",
+        "schema_version": "2.2",
         "plan": plan,
         "mode": "analysis",
         "analysis_scope": analysis_scope,
